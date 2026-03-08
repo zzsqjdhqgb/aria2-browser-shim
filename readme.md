@@ -38,17 +38,34 @@ Please note that this project is a **compatibility layer**, not a full-featured 
 
 **If you specifically need multi-threading or BitTorrent support, please install the official [Aria2](https://github.com/aria2/aria2) client.**
 
+### 🏗️ How It Works
+
+The extension uses a multi-layer architecture to intercept and fulfill download requests:
+
+```
+UserScript (aria2 RPC call)
+  → [MAIN world] fetch/WebSocket interceptor
+  → [ISOLATED world] content bridge (CustomEvent ↔ runtime.sendMessage)
+  → [Background] Aria2 JSON-RPC parser
+  → [Background] DownloadManager
+      → declarativeNetRequest (inject request headers + force Content-Disposition)
+      → tabs.create (navigate to URL, triggering browser download)
+      → downloads.onCreated (match & track the download)
+      → cleanup (remove DNR rules + close tab)
+```
+
 ### 🗺️ Roadmap
 
-This project is currently in the **Proof of Concept (PoC)** phase. The goal is to validate the interception logic before building a robust architecture.
-
-- [ ] **v0.1.0 - Core Implementation (PoC)**
-    - [x] ~~Implement the core download module using `chrome.downloads` API & handle custom Headers (Cookies/Referer) via `declarativeNetRequest`.~~ (Abandoned: [see known issues](./KNOWN_ISSUES.md#chrome-dnr-downloads-bug))
-    - [x] Implement the basic interception module for Aria2 JSON-RPC.
+- [x] **v0.1.0 - Core Implementation (PoC)** ✅
+    - [x] ~~Implement the core download module using `chrome.downloads` API & handle custom Headers via `declarativeNetRequest`.~~ (Abandoned: [see known issues](./KNOWN_ISSUES.md#1-chrome-dnr--downloadsdownload-bug))
+    - [x] ~~Implement Offscreen-based download with header injection.~~ (Abandoned: [see known issues](./KNOWN_ISSUES.md#2-offscreen-document-cannot-trigger-downloads))
+    - [x] Implement Tab-based download approach with `declarativeNetRequest` header injection
+    - [x] Implement the interception module for Aria2 JSON-RPC
         - Intercept `fetch` / `WebSocket` requests to `localhost:6800`
-        - Implement basic `aria2.addUri` parsing
-    - [ ] Implement Offscreen-based download with header injection
-    - [ ] End-to-end test with a real aria2-based script
+        - Implement `aria2.addUri`
+        - `aria2.getVersion`, `aria2.tellStatus`, `aria2.tellActive`, `aria2.pause`, `aria2.unpause`, `aria2.remove` ARE UNCOMPLETED
+    - [x] End-to-end verified with a Referer-protected video resource
+
 
 ### 📄 Documentation
 

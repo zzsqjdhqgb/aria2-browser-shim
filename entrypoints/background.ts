@@ -29,9 +29,6 @@ export default defineBackground(() => {
             return true; // 异步响应
         }
 
-        // offscreen-download 消息会由 downloadManager 直接发送到 offscreen document
-        // 这里不需要额外处理，因为 runtime.sendMessage 会直接路由到 offscreen
-
         console.log(`${LOG_PREFIX} Unknown message type: ${message?.type}`);
     });
 
