@@ -17,10 +17,11 @@ const TERMINAL_STATUSES: ReadonlySet<DownloadStatus> = new Set([
 
 /**
  * Internal task record, extends the externally exposed DownloadTask
- * _ruleId tracks declarativeNetRequest rules for cleanup after download ends
+ * _ruleId tracks declarativeNetRequest rule for cleanup after download ends
  */
 interface InternalTask extends DownloadTask {
     _ruleId: number | null;
+    _tabId: number | null;
 }
 
 class DownloadManagerImpl {
@@ -34,26 +35,25 @@ class DownloadManagerImpl {
         browser.downloads.onChanged.addListener((delta) => {
             this.handleBrowserDownloadChange(delta);
         });
+        browser.downloads.onCreated.addListener((item) => {
+            this.handleBrowserDownloadCreated(item);
+        });
     }
 
     async create(request: DownloadRequest): Promise<string> {
         const taskId = this.generateId();
-        const filePath = this.buildFilePath(request.directory, request.filename);
 
         console.log(`${LOG_PREFIX} Creating task ${taskId}`, {
             url: request.url,
             filename: request.filename,
             directory: request.directory,
-            filePath,
             hasHeaders: !!request.headers && Object.keys(request.headers).length > 0,
         });
 
-        let ruleId: number | null = null;
-        if (request.headers && Object.keys(request.headers).length > 0) {
-            console.log(`${LOG_PREFIX} Task ${taskId}: Injecting headers`, request.headers);
-            ruleId = await this.injectHeaders(request.url, request.headers);
-            console.log(`${LOG_PREFIX} Task ${taskId}: Header rule created with ruleId=${ruleId}`);
-        }
+        // 创建 DNR 规则
+        const filename = this.buildFilename(request.directory, request.filename);
+        const ruleId = await this.injectHeaders(request.url, request.headers, filename);
+        console.log(`${LOG_PREFIX} Task ${taskId}: DNR rule created with ruleId=${ruleId}`);
 
         const task: InternalTask = {
             id: taskId,
@@ -66,26 +66,22 @@ class DownloadManagerImpl {
             createdAt: Date.now(),
             completedAt: undefined,
             _ruleId: ruleId,
+            _tabId: null,
         };
         this.tasks.set(taskId, task);
 
         try {
-            console.log(`${LOG_PREFIX} Task ${taskId}: Starting browser download`, {
+            console.log(`${LOG_PREFIX} Task ${taskId}: Opening tab to trigger download`);
+
+            // 直接打开一个后台标签页触发下载
+            const tab = await browser.tabs.create({
                 url: request.url,
-                filename: filePath,
+                active: false, // 不激活，减少干扰
             });
 
-            const downloadId = await browser.downloads.download({
-                url: request.url,
-                filename: filePath ?? undefined,
-                conflictAction: "uniquify",
-            });
+            task._tabId = tab.id ?? null;
+            console.log(`${LOG_PREFIX} Task ${taskId}: Tab created with id=${tab.id}`);
 
-            task.browserDownloadId = downloadId;
-            task.status = "in_progress";
-            this.browserIdMap.set(downloadId, taskId);
-
-            console.log(`${LOG_PREFIX} Task ${taskId}: Browser download started with downloadId=${downloadId}`);
             this.emit(task);
         } catch (err) {
             const errorMsg = err instanceof Error ? err.message : String(err);
@@ -94,10 +90,7 @@ class DownloadManagerImpl {
             task.status = "error";
             task.error = errorMsg;
             this.emit(task);
-            if (ruleId) {
-                console.log(`${LOG_PREFIX} Task ${taskId}: Cleaning up header rule ${ruleId} after error`);
-                await this.removeHeaderRule(ruleId);
-            }
+            await this.cleanupRule(task);
         }
 
         return taskId;
@@ -133,8 +126,7 @@ class DownloadManagerImpl {
             return undefined;
         }
 
-        // Return a copy without internal fields
-        const { _ruleId, ...publicTask } = task;
+        const { _ruleId, _tabId, ...publicTask } = task;
         return publicTask;
     }
 
@@ -159,7 +151,7 @@ class DownloadManagerImpl {
             console.warn(`${LOG_PREFIX} Task ${taskId}: Browser download item not found`);
         }
 
-        const { _ruleId, ...publicTask } = task;
+        const { _ruleId, _tabId, ...publicTask } = task;
         return publicTask;
     }
 
@@ -180,7 +172,7 @@ class DownloadManagerImpl {
         const offset = filter.offset ?? 0;
         const limit = filter.limit ?? result.length;
 
-        const finalResult = result.slice(offset, offset + limit).map(({ _ruleId, ...task }) => task);
+        const finalResult = result.slice(offset, offset + limit).map(({ _ruleId, _tabId, ...task }) => task);
         console.log(`${LOG_PREFIX} Query returned ${finalResult.length} tasks`);
 
         return finalResult;
@@ -239,7 +231,7 @@ class DownloadManagerImpl {
         return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
     }
 
-    private buildFilePath(
+    private buildFilename(
         directory?: string,
         filename?: string
     ): string | null {
@@ -257,29 +249,49 @@ class DownloadManagerImpl {
 
     private async injectHeaders(
         url: string,
-        headers: Record<string, string>
+        headers?: Record<string, string>,
+        filename?: string | null
     ): Promise<number> {
         const ruleId = this.ruleIdCounter++;
 
-        console.log(`${LOG_PREFIX} Creating header injection rule ${ruleId} for ${url}`);
+        console.log(`${LOG_PREFIX} Creating DNR rule ${ruleId} for ${url}`);
 
-        const requestHeaders: Browser.declarativeNetRequest.ModifyHeaderInfo[] =
-            Object.entries(headers).map(([header, value]) => ({
-                header,
+        // 构建请求头修改
+        const requestHeaders: Browser.declarativeNetRequest.ModifyHeaderInfo[] = [];
+        if (headers && Object.keys(headers).length > 0) {
+            for (const [header, value] of Object.entries(headers)) {
+                requestHeaders.push({
+                    header,
+                    operation: browser.declarativeNetRequest.HeaderOperation.SET,
+                    value,
+                });
+            }
+        }
+
+        // 构建响应头修改（强制下载）
+        const contentDisposition = filename
+            ? `attachment; filename="${filename.split('/').pop()}"`
+            : "attachment";
+
+        const responseHeaders: Browser.declarativeNetRequest.ModifyHeaderInfo[] = [
+            {
+                header: "Content-Disposition",
                 operation: browser.declarativeNetRequest.HeaderOperation.SET,
-                value,
-            }));
+                value: contentDisposition,
+            },
+        ];
 
         const rule: Browser.declarativeNetRequest.Rule = {
             id: ruleId,
             priority: 1,
             action: {
                 type: browser.declarativeNetRequest.RuleActionType.MODIFY_HEADERS,
-                requestHeaders
+                requestHeaders: requestHeaders.length > 0 ? requestHeaders : undefined,
+                responseHeaders,
             },
             condition: {
                 urlFilter: url,
-                resourceTypes: Object.values(browser.declarativeNetRequest.ResourceType),
+                resourceTypes: [browser.declarativeNetRequest.ResourceType.MAIN_FRAME],
             },
         };
 
@@ -287,20 +299,75 @@ class DownloadManagerImpl {
             addRules: [rule],
         });
 
-        console.log(`${LOG_PREFIX} Header injection rule ${ruleId} created successfully`);
+        console.log(`${LOG_PREFIX} DNR rule ${ruleId} created`, {
+            requestHeadersCount: requestHeaders.length,
+            responseHeadersCount: responseHeaders.length,
+        });
+
         return ruleId;
     }
 
-    private async removeHeaderRule(ruleId: number): Promise<void> {
-        console.log(`${LOG_PREFIX} Removing header rule ${ruleId}`);
+    private async removeRule(ruleId: number): Promise<void> {
+        console.log(`${LOG_PREFIX} Removing DNR rule ${ruleId}`);
         try {
             await browser.declarativeNetRequest.updateSessionRules({
                 removeRuleIds: [ruleId],
             });
-            console.log(`${LOG_PREFIX} Header rule ${ruleId} removed successfully`);
+            console.log(`${LOG_PREFIX} DNR rule ${ruleId} removed`);
         } catch (err) {
-            console.warn(`${LOG_PREFIX} Failed to remove header rule ${ruleId}`, err);
+            console.warn(`${LOG_PREFIX} Failed to remove DNR rule ${ruleId}`, err);
         }
+    }
+
+    private async cleanupRule(task: InternalTask): Promise<void> {
+        if (task._ruleId) {
+            await this.removeRule(task._ruleId);
+            task._ruleId = null;
+        }
+    }
+
+    private async closeTab(task: InternalTask): Promise<void> {
+        if (task._tabId) {
+            try {
+                await browser.tabs.remove(task._tabId);
+                console.log(`${LOG_PREFIX} Tab ${task._tabId} closed`);
+            } catch (err) {
+                // Tab 可能已经被用户关闭或自动关闭
+                console.log(`${LOG_PREFIX} Tab ${task._tabId} already closed or not found`);
+            }
+            task._tabId = null;
+        }
+    }
+
+    /**
+     * 处理浏览器下载创建事件
+     * 当标签页导航触发下载后，浏览器会创建下载
+     */
+    private handleBrowserDownloadCreated(item: Browser.downloads.DownloadItem): void {
+        console.log(`${LOG_PREFIX} Browser download created`, {
+            id: item.id,
+            url: item.url,
+            filename: item.filename,
+        });
+
+        // 查找匹配的 pending 任务
+        for (const task of this.tasks.values()) {
+            if (task.status === "pending" && task.request.url === item.url) {
+                console.log(`${LOG_PREFIX} Matched download ${item.id} to task ${task.id}`);
+                task.browserDownloadId = item.id;
+                task.status = "in_progress";
+                task.totalBytes = item.totalBytes;
+                this.browserIdMap.set(item.id, task.id);
+                this.emit(task);
+
+                // 下载已开始，清理资源
+                this.cleanupRule(task);
+                this.closeTab(task);
+                return;
+            }
+        }
+
+        console.log(`${LOG_PREFIX} No matching task found for download ${item.id}`);
     }
 
     private handleBrowserDownloadChange(
@@ -308,7 +375,6 @@ class DownloadManagerImpl {
     ): void {
         const taskId = this.browserIdMap.get(delta.id);
         if (!taskId) {
-            // Not our download, ignore
             return;
         }
 
@@ -355,11 +421,10 @@ class DownloadManagerImpl {
             }
         }
 
-        // Clean up header rule when download reaches terminal state
-        if (TERMINAL_STATUSES.has(task.status) && task._ruleId) {
-            console.log(`${LOG_PREFIX} Task ${taskId}: Cleaning up header rule ${task._ruleId} (terminal state)`);
-            this.removeHeaderRule(task._ruleId);
-            task._ruleId = null;
+        // Clean up when download reaches terminal state
+        if (TERMINAL_STATUSES.has(task.status)) {
+            this.cleanupRule(task);
+            this.closeTab(task);
         }
 
         if (changed) this.emit(task);
@@ -375,7 +440,7 @@ class DownloadManagerImpl {
     }
 
     private emit(task: InternalTask): void {
-        const { _ruleId, ...publicTask } = task;
+        const { _ruleId, _tabId, ...publicTask } = task;
         console.log(`${LOG_PREFIX} Emitting task change`, {
             id: task.id,
             status: task.status,
