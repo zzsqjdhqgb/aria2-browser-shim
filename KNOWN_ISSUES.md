@@ -72,3 +72,20 @@ UserScripts that use `GM_xmlhttpRequest` (Greasemonkey/Tampermonkey/Violentmonke
 Until these features are implemented, users must manually modify their scripts or use scripts that rely on native `fetch` / `WebSocket`.
 
 ---
+
+## 4. Pending Tasks and Background Tab Leaks
+
+**Status:** Known Issue (Fix Planned)  
+**Affects:** All browsers
+
+### Problem
+
+When a download is initiated, the extension creates a background tab (`tabs.create({ active: false })`) to trigger the browser's native download pipeline. 
+
+If the target URL is invalid (e.g., 404 Not Found), encounters a network error, or the server responds with a regular web page instead of triggering a file download, the `browser.downloads.onCreated` event will never fire. Consequently, the extension fails to match and track the download. The task remains stuck in the `pending` state forever, and the background tab is left open, causing a "tab leak".
+
+### Planned Resolution
+
+Implement a global timeout mechanism for pending download tasks. 
+
+If a task remains in the `pending` state for too long without being successfully tracked by the download manager, it will automatically trigger a `cancel` action. The existing cancellation logic will then cleanly recycle the orphaned background tab (`browser.tabs.remove`) and clear any associated `declarativeNetRequest` rules, preventing resource leaks.
