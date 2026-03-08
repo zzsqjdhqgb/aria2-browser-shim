@@ -89,3 +89,20 @@ If the target URL is invalid (e.g., 404 Not Found), encounters a network error, 
 Implement a global timeout mechanism for pending download tasks. 
 
 If a task remains in the `pending` state for too long without being successfully tracked by the download manager, it will automatically trigger a `cancel` action. The existing cancellation logic will then cleanly recycle the orphaned background tab (`browser.tabs.remove`) and clear any associated `declarativeNetRequest` rules, preventing resource leaks.
+
+## 5. Mocked and Untested Aria2 RPC Methods
+
+**Status:** Known Issue (Refactoring Planned)  
+**Affects:** Web UIs and strict clients (e.g., AriaNg)
+
+### Problem
+
+Currently, the only fully implemented and tested RPC method is `aria2.addUri`, which handles the core download interception and initialization. All other RPC methods present in the code (such as `aria2.getVersion`, `aria2.tellStatus`, `aria2.tellActive`, `aria2.pause`, etc.) are unverified, AI-generated stubs. 
+
+These methods were quickly mocked solely to deceive strict frontends like AriaNg, allowing them to connect without throwing immediate validation errors during POC testing. As a result, the returned data is often completely inaccurate. For example, the mocked `aria2.getVersion` response explicitly claims support for `BitTorrent` and `Message Digest`, despite this extension relying purely on the browser's native HTTP/HTTPS download pipeline (which fundamentally lacks BitTorrent support).
+
+### Planned Resolution
+
+These stubs need to be systematically reviewed and refactored:
+1. **Accurate Capabilities:** Static mock responses (like `getVersion`) must be updated to honestly reflect the extension's actual capabilities (e.g., explicitly removing `BitTorrent` and other unsupported protocols).
+2. **State Mapping:** Dynamic methods (`tellStatus`, `tellActive`) require rigorous testing to ensure the browser's `downloads` API states are correctly translated into the exact JSON schemas expected by standard Aria2 clients.
