@@ -1,4 +1,5 @@
 # aria2-browser-shim
+Copyright (C) 2026 zzsqjdhqgb
 
 ![Status](https://img.shields.io/badge/Status-Proof_of_Concept-orange)
 ![Manifest](https://img.shields.io/badge/Manifest-V3-blue)
