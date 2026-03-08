@@ -1,6 +1,15 @@
 import { defineConfig } from 'wxt';
 
-// See https://wxt.dev/api/config.html
 export default defineConfig({
   modules: ['@wxt-dev/module-react'],
+  manifest: {
+    permissions: [
+      'downloads',
+      'declarativeNetRequest',
+    ],
+    host_permissions: [
+      'http://localhost:6800/*',
+      '<all_urls>' // 用于 declarativeNetRequest 注入 headers
+    ],
+  },
 });
