@@ -23,7 +23,7 @@ export default defineContentScript({
 
         // ============ 拦截 WebSocket ============
         const OriginalWebSocket = window.WebSocket;
-        
+
         class FakeWebSocket extends EventTarget {
             static readonly CONNECTING = 0;
             static readonly OPEN = 1;
@@ -79,7 +79,7 @@ export default defineContentScript({
                     const messageEvent = new MessageEvent("message", {
                         data: JSON.stringify(response),
                     });
-                    
+
                     console.log(`${LOG_PREFIX} WebSocket response:`, response);
                     this.onmessage?.(messageEvent);
                     this.dispatchEvent(messageEvent);
@@ -91,7 +91,7 @@ export default defineContentScript({
             close(code?: number, reason?: string): void {
                 console.log(`${LOG_PREFIX} WebSocket close requested`);
                 this.readyState = FakeWebSocket.CLOSING;
-                
+
                 setTimeout(() => {
                     this.readyState = FakeWebSocket.CLOSED;
                     const closeEvent = new CloseEvent("close", {
@@ -109,28 +109,39 @@ export default defineContentScript({
         window.WebSocket = new Proxy(OriginalWebSocket, {
             construct(target, args: [string | URL, (string | string[])?]) {
                 const url = args[0].toString();
-                
+
                 if (url.includes("localhost:6800") || url.includes("127.0.0.1:6800")) {
                     console.log(`${LOG_PREFIX} Creating fake WebSocket for aria2`);
                     return new FakeWebSocket(url, args[1]);
                 }
-                
+
                 // 其他 WebSocket 正常创建
                 return new target(...args);
             },
         }) as typeof WebSocket;
 
         // ============ 通用处理函数 ============
+
         async function sendToBackground(body: unknown): Promise<unknown> {
-            return new Promise((resolve) => {
-                const handler = (e: CustomEvent) => {
+            const requestId = crypto.randomUUID();
+
+            return new Promise((resolve, reject) => {
+                const timeout = setTimeout(() => {
                     window.removeEventListener("aria2-shim-response", handler as EventListener);
-                    resolve(e.detail);
+                    reject(new Error("Request timeout"));
+                }, 30000);
+
+                const handler = (e: CustomEvent) => {
+                    if (e.detail?._requestId !== requestId) return;
+                    window.removeEventListener("aria2-shim-response", handler as EventListener);
+                    resolve(e.detail.data);
                 };
+
                 window.addEventListener("aria2-shim-response", handler as EventListener);
-                
                 window.dispatchEvent(
-                    new CustomEvent("aria2-shim-request", { detail: body })
+                    new CustomEvent("aria2-shim-request", {
+                        detail: { _requestId: requestId, body }
+                    })
                 );
             });
         }
@@ -148,7 +159,7 @@ export default defineContentScript({
             } catch (e) {
                 console.error(`${LOG_PREFIX} Handle request error:`, e);
             }
-            
+
             return new Response(JSON.stringify({ error: "Invalid request" }), {
                 status: 400,
                 headers: { "Content-Type": "application/json" },
