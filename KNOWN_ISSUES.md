@@ -8,6 +8,7 @@ This document tracks known issues and browser-specific bugs encountered during d
 
 **Status:** Blocking PoC  
 **Affects:** Chrome / Chromium-based browsers
+**Related:** [Stack Overflow - Chrome Downloads API http requests are not getting modified by Declarative Net Request API](https://stackoverflow.com/questions/77932227/chrome-downloads-api-http-requests-are-not-getting-modified-by-declarative-net-r)
 
 ### Problem
 
