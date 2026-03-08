@@ -3,6 +3,7 @@ Copyright (C) 2026 zzsqjdhqgb
 
 ![Status](https://img.shields.io/badge/Status-Proof_of_Concept-orange)
 ![Manifest](https://img.shields.io/badge/Manifest-V3-blue)
+[![License](https://img.shields.io/badge/License-GPL_v3-blue.svg)](./LICENSE)
 
 **aria2-browser-shim** is a lightweight browser extension that seamlessly intercepts Aria2 requests and redirects them to your browser's native download manager.
 
