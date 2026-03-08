@@ -1,8 +1,8 @@
 {
-  "name": "wxt-react-starter",
-  "description": "manifest.json description",
+  "name": "aria2-browser-shim",
+  "description": "A lightweight browser extension that seamlessly intercepts Aria2 requests and redirects them to your browser's native download manager.",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "wxt",
