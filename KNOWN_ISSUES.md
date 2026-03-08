@@ -21,8 +21,8 @@ Use an **Offscreen Document** approach:
 
 1. Create an offscreen page
 2. Trigger a navigation to the download URL: inject an `<a href="...">` element and programmatically click it
-3. Use `webRequest.updateDynamicRules` and modify `requestHeaders` to inject custom request headers (Cookie, Referer, etc.)
-4. Use `webRequest.updateDynamicRules` and modify `responseHeaders` to inject `Content-Disposition: attachment` header, forcing download
+3. Use `declarativeNetRequest.updateDynamicRules` and modify `requestHeaders` to inject custom request headers (Cookie, Referer, etc.)
+4. Use `declarativeNetRequest.updateDynamicRules` and modify `responseHeaders` to inject `Content-Disposition: attachment` header, forcing download
 5. Capture the download via `downloads.onCreated` for state management
 
 ### Impact
