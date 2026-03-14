@@ -25,3 +25,6 @@ web-ext.config.ts
 *.sln
 *.sw?
 repomix-output.xml
+repomix.config.json
+.repomixignore
+repomix-output.md
