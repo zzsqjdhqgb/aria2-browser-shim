@@ -3,6 +3,7 @@ import type { Aria2RpcResponse } from "../types";
 import { buildTellStatusResult } from "./tell-status";
 import { filterKeys, parseOptionalStringArray } from "../param-utils";
 import * as errors from "../errors";
+import { refreshTaskIfPossible } from "./task-refresh";
 
 const LOG_PREFIX = "[Aria2:tellStopped]";
 
@@ -37,7 +38,18 @@ export async function tellStopped(
 
     console.log(`${LOG_PREFIX} offset=${offset}, num=${num}, keys=`, keys);
 
-    const stoppedTasks = downloadManager
+    let stoppedTasks = downloadManager
+        .queryTasks({ status: ["complete", "error", "cancelled"] })
+        .slice()
+        .sort((a, b) => {
+            const aTs = a.completedAt ?? a.createdAt;
+            const bTs = b.completedAt ?? b.createdAt;
+            return aTs - bTs;
+        });
+
+    await Promise.all(stoppedTasks.map((task) => refreshTaskIfPossible(task.id)));
+
+    stoppedTasks = downloadManager
         .queryTasks({ status: ["complete", "error", "cancelled"] })
         .slice()
         .sort((a, b) => {

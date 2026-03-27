@@ -2,6 +2,7 @@ import { downloadManager } from "@/core/download-manager";
 import type { DownloadTask } from "@/core/types";
 import type { Aria2RpcResponse, Aria2FileResult } from "../types";
 import * as errors from "../errors";
+import { refreshTaskIfPossible } from "./task-refresh";
 
 const LOG_PREFIX = "[Aria2:getFiles]";
 const DEFAULT_PIECE_LENGTH = 1024 * 1024;
@@ -73,6 +74,8 @@ export async function getFiles(
     }
 
     console.log(`${LOG_PREFIX} gid=${gid}`);
+
+    await refreshTaskIfPossible(gid);
 
     const task = downloadManager.getTask(gid);
     if (!task) {

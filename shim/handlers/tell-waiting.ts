@@ -3,6 +3,7 @@ import type { Aria2RpcResponse } from "../types";
 import { buildTellStatusResult } from "./tell-status";
 import { filterKeys, parseOptionalStringArray } from "../param-utils";
 import * as errors from "../errors";
+import { refreshTaskIfPossible } from "./task-refresh";
 
 const LOG_PREFIX = "[Aria2:tellWaiting]";
 
@@ -40,7 +41,14 @@ export async function tellWaiting(
     console.log(`${LOG_PREFIX} offset=${offset}, num=${num}, keys=`, keys);
 
     // "waiting" in aria2 includes both queued and paused
-    const waitingTasks = downloadManager
+    let waitingTasks = downloadManager
+        .queryTasks({ status: ["pending", "paused"] })
+        .slice()
+        .reverse();
+
+    await Promise.all(waitingTasks.map((task) => refreshTaskIfPossible(task.id)));
+
+    waitingTasks = downloadManager
         .queryTasks({ status: ["pending", "paused"] })
         .slice()
         .reverse();

@@ -406,6 +406,7 @@ class DownloadManagerImpl {
                 console.log(`${LOG_PREFIX} Matched download ${item.id} to task ${task.id}`);
                 task.browserDownloadId = item.id;
                 task.status = "in_progress";
+                task.bytesReceived = item.bytesReceived;
                 task.totalBytes = item.totalBytes;
                 this.browserIdMap.set(item.id, task.id);
                 this.emit(task);
@@ -438,6 +439,22 @@ class DownloadManagerImpl {
 
         let changed = false;
 
+        if (delta.totalBytes && typeof delta.totalBytes.current === "number") {
+            const prev = task.totalBytes;
+            task.totalBytes = delta.totalBytes.current;
+            if (prev !== task.totalBytes) {
+                changed = true;
+            }
+        }
+
+        if (delta.error && typeof delta.error.current === "string") {
+            const prev = task.error;
+            task.error = delta.error.current;
+            if (prev !== task.error) {
+                changed = true;
+            }
+        }
+
         if (delta.state) {
             const prev = task.status;
             switch (delta.state.current) {
@@ -450,6 +467,9 @@ class DownloadManagerImpl {
                     break;
                 case "complete":
                     task.status = "complete";
+                    if (task.totalBytes > 0) {
+                        task.bytesReceived = task.totalBytes;
+                    }
                     task.completedAt = Date.now();
                     break;
             }

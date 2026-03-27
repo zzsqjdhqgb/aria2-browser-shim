@@ -4,6 +4,7 @@ import { toAria2Status, toAria2ErrorCode } from "../status-map";
 import { filterKeys, parseOptionalStringArray } from "../param-utils";
 import * as errors from "../errors";
 import { buildFileResult } from "./get-files";
+import { refreshTaskIfPossible } from "./task-refresh";
 
 const LOG_PREFIX = "[Aria2:tellStatus]";
 const DEFAULT_PIECE_LENGTH = 1024 * 1024;
@@ -110,6 +111,8 @@ export async function tellStatus(
     const keys = parsedKeys;
 
     console.log(`${LOG_PREFIX} gid=${gid}, keys=`, keys);
+
+    await refreshTaskIfPossible(gid);
 
     const result = buildTellStatusResult(gid);
     if (!result) {

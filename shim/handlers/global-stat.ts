@@ -1,6 +1,7 @@
 import { downloadManager } from "@/core/download-manager";
 import type { Aria2RpcResponse, Aria2GlobalStatResult } from "../types";
 import { getMaxDownloadResultCap } from "./options";
+import { refreshTaskIfPossible } from "./task-refresh";
 
 const LOG_PREFIX = "[Aria2:getGlobalStat]";
 
@@ -16,7 +17,9 @@ export async function getGlobalStat(
 ): Promise<Aria2RpcResponse> {
     console.log(`${LOG_PREFIX} Calculating global stats`);
 
-    const active = downloadManager.queryTasks({ status: "in_progress" });
+    let active = downloadManager.queryTasks({ status: "in_progress" });
+    await Promise.all(active.map((task) => refreshTaskIfPossible(task.id)));
+    active = downloadManager.queryTasks({ status: "in_progress" });
     const waiting = downloadManager.queryTasks({ status: ["pending", "paused"] });
     const stopped = downloadManager.queryTasks({
         status: ["complete", "error", "cancelled"],

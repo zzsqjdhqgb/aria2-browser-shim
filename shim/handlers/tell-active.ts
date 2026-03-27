@@ -3,6 +3,7 @@ import type { Aria2RpcResponse } from "../types";
 import { buildTellStatusResult } from "./tell-status";
 import { filterKeys, parseOptionalStringArray } from "../param-utils";
 import * as errors from "../errors";
+import { refreshTaskIfPossible } from "./task-refresh";
 
 const LOG_PREFIX = "[Aria2:tellActive]";
 
@@ -28,7 +29,9 @@ export async function tellActive(
 
     console.log(`${LOG_PREFIX} keys=`, keys);
 
-    const activeTasks = downloadManager.queryTasks({ status: "in_progress" });
+    let activeTasks = downloadManager.queryTasks({ status: "in_progress" });
+    await Promise.all(activeTasks.map((task) => refreshTaskIfPossible(task.id)));
+    activeTasks = downloadManager.queryTasks({ status: "in_progress" });
     const results = [];
 
     for (const task of activeTasks) {

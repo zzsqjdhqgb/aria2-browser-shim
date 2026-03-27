@@ -1,6 +1,7 @@
 import { downloadManager } from "@/core/download-manager";
 import type { Aria2RpcResponse, Aria2ServerResult } from "../types";
 import * as errors from "../errors";
+import { refreshTaskIfPossible } from "./task-refresh";
 
 const LOG_PREFIX = "[Aria2:getServers]";
 
@@ -20,6 +21,8 @@ export async function getServers(
     }
 
     console.log(`${LOG_PREFIX} gid=${gid}`);
+
+    await refreshTaskIfPossible(gid);
 
     const task = downloadManager.getTask(gid);
     if (!task) {
