@@ -13,7 +13,7 @@ let sessionId: string | null = null;
  */
 export function getSessionId(): string {
     if (!sessionId) {
-        const bytes = new Uint8Array(8);
+        const bytes = new Uint8Array(20);
         crypto.getRandomValues(bytes);
         sessionId = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
     }

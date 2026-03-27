@@ -4,6 +4,7 @@ import type { Aria2RpcResponse, Aria2FileResult } from "../types";
 import * as errors from "../errors";
 
 const LOG_PREFIX = "[Aria2:getFiles]";
+const DEFAULT_PIECE_LENGTH = 1024 * 1024;
 
 /**
  * Build a single Aria2FileResult from a DownloadTask.
@@ -13,12 +14,22 @@ export function buildFileResult(task: DownloadTask): Aria2FileResult {
     const filename = task.request.filename ?? extractFilenameFromUrl(task.request.url);
     const dir = task.request.directory ?? "";
     const path = dir ? `${dir}/${filename}` : filename;
+    const totalLength = task.totalBytes > 0 ? task.totalBytes : 0;
+
+    let completedLength = task.bytesReceived;
+    if (totalLength > 0) {
+        // aria2.getFiles reports completed bytes by fully completed pieces.
+        const completedPieces = task.bytesReceived >= totalLength
+            ? Math.ceil(totalLength / DEFAULT_PIECE_LENGTH)
+            : Math.floor(task.bytesReceived / DEFAULT_PIECE_LENGTH);
+        completedLength = Math.min(totalLength, completedPieces * DEFAULT_PIECE_LENGTH);
+    }
 
     return {
         index: "1",
         path,
-        length: String(task.totalBytes > 0 ? task.totalBytes : 0),
-        completedLength: String(task.bytesReceived),
+        length: String(totalLength),
+        completedLength: String(completedLength),
         selected: "true",
         uris: [
             {

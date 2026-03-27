@@ -5,8 +5,7 @@ import * as errors from "../errors";
 const LOG_PREFIX = "[Aria2:options]";
 
 /**
- * The set of options we can meaningfully report.
- * These reflect what our shim actually supports.
+ * The per-download option defaults we can meaningfully expose.
  */
 function getDefaultOptions(): Record<string, string> {
     return {
@@ -45,11 +44,42 @@ function getDefaultOptions(): Record<string, string> {
     };
 }
 
+const GLOBAL_ONLY_DEFAULTS: Record<string, string> = {
+    "max-concurrent-downloads": "5",
+    "max-overall-download-limit": "0",
+    "max-overall-upload-limit": "0",
+    "save-session": "",
+    "save-session-interval": "0",
+    "log-level": "debug",
+    "max-download-result": "1000",
+};
+
+const globalOptionsState: Record<string, string> = {
+    ...getDefaultOptions(),
+    ...GLOBAL_ONLY_DEFAULTS,
+};
+
+export function getMaxDownloadResultCap(): number {
+    const raw = Number(globalOptionsState["max-download-result"]);
+    return Number.isInteger(raw) && raw >= 0 ? raw : 1000;
+}
+
+function getTaskOptionTemplate(): Record<string, unknown> {
+    const template = getDefaultOptions() as Record<string, unknown>;
+
+    // Global options are the template for newly added downloads in aria2.
+    // We mirror that behavior for overlapping per-download keys.
+    for (const key of Object.keys(template)) {
+        if (typeof globalOptionsState[key] === "string") {
+            template[key] = globalOptionsState[key];
+        }
+    }
+
+    return template;
+}
+
 /**
  * aria2.getOption([secret], gid)
- *
- * Returns options of the download denoted by gid.
- * Returns only options that the shim recognizes.
  */
 export async function getOption(
     id: string | number,
@@ -67,9 +97,8 @@ export async function getOption(
         return { jsonrpc: "2.0", id, error: errors.gidNotFound(gid) };
     }
 
-    const options = getDefaultOptions();
+    const options = getTaskOptionTemplate();
 
-    // Fill in task-specific values
     if (task.request.directory) {
         options["dir"] = task.request.directory;
     }
@@ -77,10 +106,8 @@ export async function getOption(
         options["out"] = task.request.filename;
     }
     if (task.request.headers) {
-        const headerArr = Object.entries(task.request.headers).map(
-            ([k, v]) => `${k}: ${v}`
-        );
-        options["header"] = JSON.stringify(headerArr);
+        const headerArr = Object.entries(task.request.headers).map(([k, v]) => `${k}: ${v}`);
+        options["header"] = headerArr;
     }
 
     return { jsonrpc: "2.0", id, result: options };
@@ -88,18 +115,13 @@ export async function getOption(
 
 /**
  * aria2.changeOption([secret], gid, options)
- *
- * Changes options of the download denoted by gid dynamically.
- * In our shim, this is a limited no-op for most options since
- * browser downloads can't be reconfigured mid-flight.
- * We accept the call and log it, but only a few options have real effect.
  */
 export async function changeOption(
     id: string | number,
     params: unknown[]
 ): Promise<Aria2RpcResponse> {
     const gid = params[0] as string | undefined;
-    const options = params[1] as Record<string, unknown> | undefined;
+    const options = params[1];
 
     if (!gid || typeof gid !== "string") {
         return { jsonrpc: "2.0", id, error: errors.invalidParams("Missing GID") };
@@ -112,53 +134,59 @@ export async function changeOption(
         return { jsonrpc: "2.0", id, error: errors.gidNotFound(gid) };
     }
 
-    // Log the options but note we can't actually change most things mid-download
-    if (options) {
-        console.warn(
-            `${LOG_PREFIX} changeOption: options received but most cannot be applied ` +
-            `to in-progress browser downloads. Options:`, options
-        );
+    if (!options || typeof options !== "object" || Array.isArray(options)) {
+        return {
+            jsonrpc: "2.0",
+            id,
+            error: errors.invalidParams("options must be an object"),
+        };
     }
 
-    // Accept the call gracefully
+    // Browser downloads cannot apply most option mutations at runtime.
+    console.warn(`${LOG_PREFIX} changeOption is accepted but mostly non-operational`, options);
+
     return { jsonrpc: "2.0", id, result: "OK" };
 }
 
 /**
  * aria2.getGlobalOption([secret])
- *
- * Returns global options.
  */
 export async function getGlobalOption(
     id: string | number,
     _params: unknown[]
 ): Promise<Aria2RpcResponse> {
     console.log(`${LOG_PREFIX} getGlobalOption`);
-
-    const options = getDefaultOptions();
-    // Add global-only options
-    options["max-concurrent-downloads"] = "5";
-    options["max-overall-download-limit"] = "0";
-    options["max-overall-upload-limit"] = "0";
-    options["save-session"] = "";
-    options["save-session-interval"] = "0";
-    options["log-level"] = "debug";
-
-    return { jsonrpc: "2.0", id, result: options };
+    return { jsonrpc: "2.0", id, result: { ...globalOptionsState } };
 }
 
 /**
  * aria2.changeGlobalOption([secret], options)
- *
- * Changes global options. In our shim, accepted but mostly ignored.
  */
 export async function changeGlobalOption(
     id: string | number,
     params: unknown[]
 ): Promise<Aria2RpcResponse> {
-    const options = params[0] as Record<string, unknown> | undefined;
+    const options = params[0];
     console.log(`${LOG_PREFIX} changeGlobalOption`, options);
 
-    // Accept gracefully; we don't have real global config to modify
+    if (!options || typeof options !== "object" || Array.isArray(options)) {
+        return {
+            jsonrpc: "2.0",
+            id,
+            error: errors.invalidParams("options must be an object"),
+        };
+    }
+
+    for (const [key, value] of Object.entries(options as Record<string, unknown>)) {
+        if (typeof value !== "string") {
+            return {
+                jsonrpc: "2.0",
+                id,
+                error: errors.invalidParams(`option ${key} must be a string`),
+            };
+        }
+        globalOptionsState[key] = value;
+    }
+
     return { jsonrpc: "2.0", id, result: "OK" };
 }

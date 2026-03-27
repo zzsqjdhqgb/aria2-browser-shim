@@ -130,3 +130,19 @@ export function filterKeys<T extends Record<string, unknown>>(
     }
     return filtered as Partial<T>;
 }
+
+/**
+ * Parse an optional RPC keys parameter.
+ *
+ * - undefined => undefined
+ * - string[]  => string[]
+ * - otherwise => null (invalid)
+ */
+export function parseOptionalStringArray(
+    value: unknown
+): string[] | undefined | null {
+    if (value === undefined) return undefined;
+    if (!Array.isArray(value)) return null;
+    if (!value.every((item) => typeof item === "string")) return null;
+    return value as string[];
+}

@@ -26,7 +26,7 @@ import {
     shutdown,
     forceShutdown,
 } from "./handlers/meta";
-import { addTorrent, addMetalink, getPeers } from "./handlers/unsupported";
+import { addTorrent, addMetalink, getPeers, changeUri } from "./handlers/unsupported";
 import { listMethods, listNotifications, createMulticallHandler } from "./handlers/system";
 
 const LOG_PREFIX = "[Aria2Router]";
@@ -75,6 +75,7 @@ const METHOD_MAP: Readonly<Record<string, RpcHandler>> = {
 
     // Queue management
     "aria2.changePosition": changePosition,
+    "aria2.changeUri": changeUri,
 
     // Global stats
     "aria2.getGlobalStat": getGlobalStat,

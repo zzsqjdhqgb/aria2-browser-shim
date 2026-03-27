@@ -1,11 +1,32 @@
 import { downloadManager } from "@/core/download-manager";
 import type { Aria2RpcResponse, Aria2TellStatusResult } from "../types";
 import { toAria2Status, toAria2ErrorCode } from "../status-map";
-import { filterKeys } from "../param-utils";
+import { filterKeys, parseOptionalStringArray } from "../param-utils";
 import * as errors from "../errors";
 import { buildFileResult } from "./get-files";
 
 const LOG_PREFIX = "[Aria2:tellStatus]";
+const DEFAULT_PIECE_LENGTH = 1024 * 1024;
+
+function buildBitfield(totalLength: number, completedLength: number, pieceLength: number): string | undefined {
+    if (totalLength <= 0 || pieceLength <= 0) return undefined;
+
+    const numPieces = Math.max(1, Math.ceil(totalLength / pieceLength));
+    let completedPieces = Math.floor(completedLength / pieceLength);
+    if (completedLength >= totalLength) {
+        completedPieces = numPieces;
+    }
+    completedPieces = Math.max(0, Math.min(numPieces, completedPieces));
+
+    const bits = "1".repeat(completedPieces) + "0".repeat(numPieces - completedPieces);
+    const padded = bits.padEnd(Math.ceil(bits.length / 4) * 4, "0");
+
+    let hex = "";
+    for (let i = 0; i < padded.length; i += 4) {
+        hex += Number.parseInt(padded.slice(i, i + 4), 2).toString(16);
+    }
+    return hex;
+}
 
 /**
  * Build a full Aria2TellStatusResult from a DownloadTask.
@@ -17,6 +38,10 @@ export function buildTellStatusResult(taskId: string): Aria2TellStatusResult | n
     const aria2Status = toAria2Status(task.status);
     const completedLength = String(task.bytesReceived);
     const totalLength = String(task.totalBytes > 0 ? task.totalBytes : 0);
+    const pieceLength = String(DEFAULT_PIECE_LENGTH);
+    const numPieces = task.totalBytes > 0
+        ? String(Math.ceil(task.totalBytes / DEFAULT_PIECE_LENGTH))
+        : "0";
 
     // Calculate download speed: for active downloads we can estimate
     // but without tracking intervals this is approximate
@@ -36,10 +61,19 @@ export function buildTellStatusResult(taskId: string): Aria2TellStatusResult | n
         uploadLength: "0",
         downloadSpeed,
         uploadSpeed: "0",
+        pieceLength,
+        numPieces,
         connections: task.status === "in_progress" ? "1" : "0",
         dir: task.request.directory ?? "",
         files: [buildFileResult(task)],
     };
+
+    if (task.status !== "pending") {
+        const bitfield = buildBitfield(task.totalBytes, task.bytesReceived, DEFAULT_PIECE_LENGTH);
+        if (bitfield) {
+            result.bitfield = bitfield;
+        }
+    }
 
     // Add error info if applicable
     if (task.status === "error" && task.error) {
@@ -65,7 +99,15 @@ export async function tellStatus(
         return { jsonrpc: "2.0", id, error: errors.invalidParams("Missing GID") };
     }
 
-    const keys = params[1] as string[] | undefined;
+    const parsedKeys = parseOptionalStringArray(params[1]);
+    if (parsedKeys === null) {
+        return {
+            jsonrpc: "2.0",
+            id,
+            error: errors.invalidParams("keys must be an array of strings"),
+        };
+    }
+    const keys = parsedKeys;
 
     console.log(`${LOG_PREFIX} gid=${gid}, keys=`, keys);
 

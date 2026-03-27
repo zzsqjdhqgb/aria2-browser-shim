@@ -1,5 +1,6 @@
 import { downloadManager } from "@/core/download-manager";
 import type { Aria2RpcResponse, Aria2GlobalStatResult } from "../types";
+import { getMaxDownloadResultCap } from "./options";
 
 const LOG_PREFIX = "[Aria2:getGlobalStat]";
 
@@ -20,6 +21,7 @@ export async function getGlobalStat(
     const stopped = downloadManager.queryTasks({
         status: ["complete", "error", "cancelled"],
     });
+    const stoppedCap = getMaxDownloadResultCap();
 
     // Aggregate download speed from all active tasks
     let totalDownloadSpeed = 0;
@@ -37,7 +39,7 @@ export async function getGlobalStat(
         uploadSpeed: "0",
         numActive: String(active.length),
         numWaiting: String(waiting.length),
-        numStopped: String(stopped.length),
+        numStopped: String(Math.min(stopped.length, stoppedCap)),
         numStoppedTotal: String(stopped.length),
     };
 

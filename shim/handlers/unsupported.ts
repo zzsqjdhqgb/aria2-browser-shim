@@ -63,3 +63,24 @@ export async function getPeers(
         error: errors.unsupported("getPeers is only applicable to BitTorrent downloads"),
     };
 }
+
+/**
+ * aria2.changeUri
+ *
+ * aria2 can reconfigure per-file mirror lists at runtime.
+ * Browser downloads API has no equivalent concept once download is created.
+ */
+export async function changeUri(
+    id: string | number,
+    _params: unknown[]
+): Promise<Aria2RpcResponse> {
+    console.warn(`${LOG_PREFIX} changeUri called — not supported`);
+    return {
+        jsonrpc: "2.0",
+        id,
+        error: errors.unsupported(
+            "changeUri is not supported. Browser downloads cannot update URI mirror lists " +
+            "for an existing download task."
+        ),
+    };
+}

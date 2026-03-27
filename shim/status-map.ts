@@ -32,12 +32,20 @@ export function toAria2ErrorCode(error?: string): string {
 
     const lower = error.toLowerCase();
 
-    if (lower.includes("timeout")) return "7";       // timed out
+    if (lower.includes("timeout")) return "2"; // timeout
     if (lower.includes("not found") || lower.includes("404")) return "3"; // resource not found
-    if (lower.includes("unauthorized") || lower.includes("403")) return "6"; // authorization failed
-    if (lower.includes("network") || lower.includes("dns")) return "19"; // DNS resolve failed / network
-    if (lower.includes("interrupted")) return "1";   // unknown error / interrupted
-    if (lower.includes("cancelled")) return "0";     // user cancelled (not an error per se)
+    if (
+        lower.includes("unauthorized") ||
+        lower.includes("forbidden") ||
+        lower.includes("401") ||
+        lower.includes("403")
+    ) {
+        return "24"; // HTTP authorization failed
+    }
+    if (lower.includes("dns") || lower.includes("resolve")) return "19"; // name resolution failed
+    if (lower.includes("network") || lower.includes("connection")) return "6"; // network problem
+    if (lower.includes("interrupted")) return "1"; // unknown error / interrupted
+    if (lower.includes("cancelled")) return "1"; // removed by user maps to generic non-success code
 
     return "1"; // generic unknown error
 }

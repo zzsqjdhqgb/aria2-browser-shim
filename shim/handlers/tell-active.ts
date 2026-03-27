@@ -1,7 +1,8 @@
 import { downloadManager } from "@/core/download-manager";
 import type { Aria2RpcResponse } from "../types";
 import { buildTellStatusResult } from "./tell-status";
-import { filterKeys } from "../param-utils";
+import { filterKeys, parseOptionalStringArray } from "../param-utils";
+import * as errors from "../errors";
 
 const LOG_PREFIX = "[Aria2:tellActive]";
 
@@ -15,7 +16,15 @@ export async function tellActive(
     id: string | number,
     params: unknown[]
 ): Promise<Aria2RpcResponse> {
-    const keys = params[0] as string[] | undefined;
+    const parsedKeys = parseOptionalStringArray(params[0]);
+    if (parsedKeys === null) {
+        return {
+            jsonrpc: "2.0",
+            id,
+            error: errors.invalidParams("keys must be an array of strings"),
+        };
+    }
+    const keys = parsedKeys;
 
     console.log(`${LOG_PREFIX} keys=`, keys);
 

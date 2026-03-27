@@ -1,5 +1,4 @@
 import type { Aria2RpcRequest, Aria2RpcResponse } from "../types";
-import { stripToken } from "../param-utils";
 
 const LOG_PREFIX = "[Aria2:system]";
 
@@ -30,6 +29,7 @@ export const SUPPORTED_METHODS: readonly string[] = [
     "aria2.getGlobalOption",
     "aria2.changeGlobalOption",
     "aria2.changePosition",
+    "aria2.changeUri",
     "aria2.getGlobalStat",
     "aria2.getVersion",
     "aria2.getSessionInfo",
@@ -102,7 +102,7 @@ export function createMulticallHandler(
         id: string | number,
         params: unknown[]
     ): Promise<Aria2RpcResponse> {
-        const calls = params[0] as Array<{ methodName: string; params: unknown[] }> | undefined;
+        const calls = params[0] as Array<{ methodName: string; params?: unknown[] }> | undefined;
 
         if (!Array.isArray(calls)) {
             return {
@@ -117,7 +117,7 @@ export function createMulticallHandler(
         const results: unknown[] = [];
 
         for (const call of calls) {
-            if (!call.methodName || !Array.isArray(call.params)) {
+            if (!call.methodName || (call.params !== undefined && !Array.isArray(call.params))) {
                 results.push({
                     code: -32602,
                     message: "Invalid method call structure",
@@ -125,12 +125,14 @@ export function createMulticallHandler(
                 continue;
             }
 
+            const nestedParams = Array.isArray(call.params) ? call.params : [];
+
             try {
                 const response = await dispatch({
                     jsonrpc: "2.0",
                     id: "multicall-sub",
                     method: call.methodName,
-                    params: call.params,
+                    params: nestedParams,
                 });
 
                 if (response.error) {
