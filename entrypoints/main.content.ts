@@ -21,6 +21,244 @@ export default defineContentScript({
             return originalFetch.call(this, input, init);
         };
 
+        // ============ 拦截 XMLHttpRequest ============
+        const OriginalXHR = window.XMLHttpRequest;
+
+        class FakeXMLHttpRequest extends EventTarget {
+            // ReadyState constants
+            static readonly UNSENT = 0;
+            static readonly OPENED = 1;
+            static readonly HEADERS_RECEIVED = 2;
+            static readonly LOADING = 3;
+            static readonly DONE = 4;
+
+            readonly UNSENT = 0;
+            readonly OPENED = 1;
+            readonly HEADERS_RECEIVED = 2;
+            readonly LOADING = 3;
+            readonly DONE = 4;
+
+            readyState: number = FakeXMLHttpRequest.UNSENT;
+            response: any = "";
+            responseText: string = "";
+            responseType: XMLHttpRequestResponseType = "";
+            responseURL: string = "";
+            responseXML: Document | null = null;
+            status: number = 0;
+            statusText: string = "";
+            timeout: number = 0;
+            upload: XMLHttpRequestUpload = new OriginalXHR().upload;
+            withCredentials: boolean = false;
+
+            onreadystatechange: ((this: XMLHttpRequest, ev: Event) => any) | null = null;
+            onabort: ((this: XMLHttpRequest, ev: ProgressEvent) => any) | null = null;
+            onerror: ((this: XMLHttpRequest, ev: ProgressEvent) => any) | null = null;
+            onload: ((this: XMLHttpRequest, ev: ProgressEvent) => any) | null = null;
+            onloadend: ((this: XMLHttpRequest, ev: ProgressEvent) => any) | null = null;
+            onloadstart: ((this: XMLHttpRequest, ev: ProgressEvent) => any) | null = null;
+            onprogress: ((this: XMLHttpRequest, ev: ProgressEvent) => any) | null = null;
+            ontimeout: ((this: XMLHttpRequest, ev: ProgressEvent) => any) | null = null;
+
+            private _method: string = "";
+            private _url: string = "";
+            private _async: boolean = true;
+            private _requestHeaders: Record<string, string> = {};
+            private _responseHeaders: Record<string, string> = {};
+            private _intercepted: boolean = false;
+            private _aborted: boolean = false;
+            private _realXHR: XMLHttpRequest | null = null;
+
+            open(method: string, url: string | URL, async: boolean = true, username?: string | null, password?: string | null): void {
+                this._method = method;
+                this._url = url.toString();
+                this._async = async;
+
+                if (this._url.includes("localhost:6800") || this._url.includes("127.0.0.1:6800")) {
+                    this._intercepted = true;
+                    console.log(`${LOG_PREFIX} Intercepted XHR ${method} to ${this._url}`);
+                    this.readyState = FakeXMLHttpRequest.OPENED;
+                    this._fireReadyStateChange();
+                } else {
+                    // 非 aria2 请求，使用真实 XHR
+                    this._intercepted = false;
+                    this._realXHR = new OriginalXHR();
+                    this._proxyRealXHR();
+                    this._realXHR.open(method, url, async, username, password);
+                }
+            }
+
+            setRequestHeader(name: string, value: string): void {
+                if (this._intercepted) {
+                    this._requestHeaders[name] = value;
+                } else {
+                    this._realXHR?.setRequestHeader(name, value);
+                }
+            }
+
+            send(body?: Document | XMLHttpRequestBodyInit | null): void {
+                if (this._intercepted) {
+                    console.log(`${LOG_PREFIX} XHR send:`, body);
+                    this._handleInterceptedSend(body as string | null);
+                } else {
+                    this._realXHR?.send(body);
+                }
+            }
+
+            abort(): void {
+                if (this._intercepted) {
+                    this._aborted = true;
+                    this.readyState = FakeXMLHttpRequest.UNSENT;
+                    const abortEvent = new ProgressEvent("abort");
+                    this.onabort?.call(this as any, abortEvent);
+                    this.dispatchEvent(abortEvent);
+                } else {
+                    this._realXHR?.abort();
+                }
+            }
+
+            getResponseHeader(name: string): string | null {
+                if (this._intercepted) {
+                    return this._responseHeaders[name.toLowerCase()] ?? null;
+                }
+                return this._realXHR?.getResponseHeader(name) ?? null;
+            }
+
+            getAllResponseHeaders(): string {
+                if (this._intercepted) {
+                    return Object.entries(this._responseHeaders)
+                        .map(([k, v]) => `${k}: ${v}`)
+                        .join("\r\n");
+                }
+                return this._realXHR?.getAllResponseHeaders() ?? "";
+            }
+
+            overrideMimeType(mime: string): void {
+                if (!this._intercepted) {
+                    this._realXHR?.overrideMimeType(mime);
+                }
+            }
+
+            private async _handleInterceptedSend(bodyStr: string | null): Promise<void> {
+                try {
+                    const body = bodyStr ? JSON.parse(bodyStr) : null;
+                    if (body) {
+                        const result = await sendToBackground(body);
+                        if (this._aborted) return;
+
+                        const responseStr = JSON.stringify(result);
+
+                        this._responseHeaders = {
+                            "content-type": "application/json",
+                        };
+
+                        // HEADERS_RECEIVED
+                        this.readyState = FakeXMLHttpRequest.HEADERS_RECEIVED;
+                        this.status = 200;
+                        this.statusText = "OK";
+                        this._fireReadyStateChange();
+
+                        // LOADING
+                        this.readyState = FakeXMLHttpRequest.LOADING;
+                        this._fireReadyStateChange();
+
+                        // DONE
+                        this.readyState = FakeXMLHttpRequest.DONE;
+                        this.responseText = responseStr;
+                        this.response = this.responseType === "json" ? result : responseStr;
+                        this.responseURL = this._url;
+                        this._fireReadyStateChange();
+
+                        // Fire load events
+                        const loadEvent = new ProgressEvent("load", {
+                            lengthComputable: true,
+                            loaded: responseStr.length,
+                            total: responseStr.length,
+                        });
+                        this.onload?.call(this as any, loadEvent);
+                        this.dispatchEvent(loadEvent);
+
+                        const loadEndEvent = new ProgressEvent("loadend", {
+                            lengthComputable: true,
+                            loaded: responseStr.length,
+                            total: responseStr.length,
+                        });
+                        this.onloadend?.call(this as any, loadEndEvent);
+                        this.dispatchEvent(loadEndEvent);
+
+                        console.log(`${LOG_PREFIX} XHR response:`, result);
+                    } else {
+                        this._setError();
+                    }
+                } catch (err) {
+                    console.error(`${LOG_PREFIX} XHR handle error:`, err);
+                    this._setError();
+                }
+            }
+
+            private _setError(): void {
+                this.readyState = FakeXMLHttpRequest.DONE;
+                this.status = 400;
+                this.statusText = "Bad Request";
+                this.responseText = JSON.stringify({ error: "Invalid request" });
+                this.response = this.responseText;
+                this._fireReadyStateChange();
+
+                const errorEvent = new ProgressEvent("error");
+                this.onerror?.call(this as any, errorEvent);
+                this.dispatchEvent(errorEvent);
+
+                const loadEndEvent = new ProgressEvent("loadend");
+                this.onloadend?.call(this as any, loadEndEvent);
+                this.dispatchEvent(loadEndEvent);
+            }
+
+            private _fireReadyStateChange(): void {
+                const event = new Event("readystatechange");
+                this.onreadystatechange?.call(this as any, event);
+                this.dispatchEvent(event);
+            }
+
+            private _proxyRealXHR(): void {
+                if (!this._realXHR) return;
+                const self = this;
+                const xhr = this._realXHR;
+
+                // Proxy event handlers
+                const events = ["readystatechange", "abort", "error", "load", "loadend", "loadstart", "progress", "timeout"] as const;
+
+                xhr.onreadystatechange = function () {
+                    self.readyState = xhr.readyState;
+                    if (xhr.readyState >= FakeXMLHttpRequest.HEADERS_RECEIVED) {
+                        self.status = xhr.status;
+                        self.statusText = xhr.statusText;
+                    }
+                    if (xhr.readyState === FakeXMLHttpRequest.DONE) {
+                        self.response = xhr.response;
+                        self.responseText = xhr.responseType === "" || xhr.responseType === "text" ? xhr.responseText : "";
+                        self.responseURL = xhr.responseURL;
+                        self.responseXML = xhr.responseType === "" || xhr.responseType === "document" ? xhr.responseXML : null;
+                    }
+                    self.onreadystatechange?.call(self as any, new Event("readystatechange"));
+                    self.dispatchEvent(new Event("readystatechange"));
+                };
+
+                const proxyEvent = (eventName: string) => {
+                    xhr.addEventListener(eventName, (e) => {
+                        const handler = (self as any)[`on${eventName}`];
+                        if (typeof handler === "function") {
+                            handler.call(self, e);
+                        }
+                        self.dispatchEvent(new ProgressEvent(eventName, e as ProgressEventInit));
+                    });
+                };
+
+                ["abort", "error", "load", "loadend", "loadstart", "progress", "timeout"].forEach(proxyEvent);
+            }
+        }
+
+        // 替换全局 XMLHttpRequest
+        window.XMLHttpRequest = FakeXMLHttpRequest as any;
+
         // ============ 拦截 WebSocket ============
         const OriginalWebSocket = window.WebSocket;
 
@@ -133,6 +371,7 @@ export default defineContentScript({
 
                 const handler = (e: CustomEvent) => {
                     if (e.detail?._requestId !== requestId) return;
+                    clearTimeout(timeout);
                     window.removeEventListener("aria2-shim-response", handler as EventListener);
                     resolve(e.detail.data);
                 };
@@ -166,6 +405,6 @@ export default defineContentScript({
             });
         }
 
-        console.log(`${LOG_PREFIX} Fetch and WebSocket interceptors installed`);
+        console.log(`${LOG_PREFIX} Fetch, XHR, and WebSocket interceptors installed`);
     },
 });

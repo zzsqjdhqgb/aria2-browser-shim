@@ -98,23 +98,68 @@ class DownloadManagerImpl {
 
     async pause(taskId: string): Promise<void> {
         console.log(`${LOG_PREFIX} Pausing task ${taskId}`);
-        const task = this.requireTask(taskId);
-        await browser.downloads.pause(task.browserDownloadId!);
+        const task = this.tasks.get(taskId);
+        if (!task) {
+            throw new Error(`Task ${taskId} not found`);
+        }
+
+        if (task.browserDownloadId === undefined) {
+            if (task.status === "pending") {
+                await this.closeTab(task);
+                task.status = "paused";
+                this.emit(task);
+                console.log(`${LOG_PREFIX} Task ${taskId}: Paused before browser download started`);
+                return;
+            }
+            throw new Error(`Task ${taskId} cannot be paused in status ${task.status}`);
+        }
+
+        await browser.downloads.pause(task.browserDownloadId);
         console.log(`${LOG_PREFIX} Task ${taskId}: Pause request sent`);
     }
 
     async resume(taskId: string): Promise<void> {
         console.log(`${LOG_PREFIX} Resuming task ${taskId}`);
-        const task = this.requireTask(taskId);
-        await browser.downloads.resume(task.browserDownloadId!);
+        const task = this.tasks.get(taskId);
+        if (!task) {
+            throw new Error(`Task ${taskId} not found`);
+        }
+
+        if (task.browserDownloadId === undefined) {
+            if (task.status === "paused") {
+                const tab = await browser.tabs.create({
+                    url: task.request.url,
+                    active: false,
+                });
+                task._tabId = tab.id ?? null;
+                task.status = "pending";
+                this.emit(task);
+                console.log(`${LOG_PREFIX} Task ${taskId}: Resume restarted pending download trigger`);
+                return;
+            }
+            throw new Error(`Task ${taskId} cannot be resumed in status ${task.status}`);
+        }
+
+        await browser.downloads.resume(task.browserDownloadId);
         console.log(`${LOG_PREFIX} Task ${taskId}: Resume request sent`);
     }
 
     async cancel(taskId: string): Promise<void> {
         console.log(`${LOG_PREFIX} Cancelling task ${taskId}`);
-        const task = this.requireTask(taskId);
-        await browser.downloads.cancel(task.browserDownloadId!);
+        const task = this.tasks.get(taskId);
+        if (!task) {
+            throw new Error(`Task ${taskId} not found`);
+        }
+
+        if (task.browserDownloadId !== undefined) {
+            await browser.downloads.cancel(task.browserDownloadId);
+        } else {
+            await this.closeTab(task);
+            await this.cleanupRule(task);
+        }
+
         task.status = "cancelled";
+        task.completedAt = Date.now();
         console.log(`${LOG_PREFIX} Task ${taskId}: Cancelled`);
         this.emit(task);
     }
@@ -226,9 +271,14 @@ class DownloadManagerImpl {
     // ─── Private Methods ─────────────────────────────────
 
     private generateId(): string {
-        const bytes = new Uint8Array(8);
-        crypto.getRandomValues(bytes);
-        return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+        // aria2 reserves all-zero GID and requires uniqueness.
+        while (true) {
+            const bytes = new Uint8Array(8);
+            crypto.getRandomValues(bytes);
+            const gid = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+            if (gid === "0000000000000000") continue;
+            if (!this.tasks.has(gid)) return gid;
+        }
     }
 
     private buildFilename(
@@ -356,6 +406,7 @@ class DownloadManagerImpl {
                 console.log(`${LOG_PREFIX} Matched download ${item.id} to task ${task.id}`);
                 task.browserDownloadId = item.id;
                 task.status = "in_progress";
+                task.bytesReceived = item.bytesReceived;
                 task.totalBytes = item.totalBytes;
                 this.browserIdMap.set(item.id, task.id);
                 this.emit(task);
@@ -388,6 +439,22 @@ class DownloadManagerImpl {
 
         let changed = false;
 
+        if (delta.totalBytes && typeof delta.totalBytes.current === "number") {
+            const prev = task.totalBytes;
+            task.totalBytes = delta.totalBytes.current;
+            if (prev !== task.totalBytes) {
+                changed = true;
+            }
+        }
+
+        if (delta.error && typeof delta.error.current === "string") {
+            const prev = task.error;
+            task.error = delta.error.current;
+            if (prev !== task.error) {
+                changed = true;
+            }
+        }
+
         if (delta.state) {
             const prev = task.status;
             switch (delta.state.current) {
@@ -400,6 +467,9 @@ class DownloadManagerImpl {
                     break;
                 case "complete":
                     task.status = "complete";
+                    if (task.totalBytes > 0) {
+                        task.bytesReceived = task.totalBytes;
+                    }
                     task.completedAt = Date.now();
                     break;
             }
