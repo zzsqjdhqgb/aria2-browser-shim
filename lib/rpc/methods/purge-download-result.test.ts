@@ -12,13 +12,20 @@ function createMockCtx(overrides: Partial<HandlerContext> = {}): HandlerContext 
     settings: { ...DEFAULT_SETTINGS },
     store: {
       session: { putTask: vi.fn(), getTask: vi.fn(), getAllTasks: vi.fn(), removeTask: vi.fn() },
-      local: { getSettings: vi.fn(), putSettings: vi.fn(), getPerSiteEnabled: vi.fn(), setPerSiteEnabled: vi.fn(), getDownloadHistory: vi.fn(), addToHistory: vi.fn() },
+      local: {
+        getSettings: vi.fn(),
+        putSettings: vi.fn(),
+        getPerSiteEnabled: vi.fn(),
+        setPerSiteEnabled: vi.fn(),
+        getDownloadHistory: vi.fn(),
+        addToHistory: vi.fn(),
+        removeFromHistory: vi.fn(),
+        purgeTerminalHistory: vi.fn().mockResolvedValue(undefined),
+      },
     },
     ...overrides,
   };
 }
-
-const HISTORY_KEY = 'aria2_download_history';
 
 function createMockHistoryTask(gid: string, status: DownloadStatus): DownloadTask {
   return {
@@ -33,18 +40,12 @@ function createMockHistoryTask(gid: string, status: DownloadStatus): DownloadTas
 }
 
 describe('aria2.purgeDownloadResult', () => {
-  let localGet: ReturnType<typeof vi.fn>;
-  let localSet: ReturnType<typeof vi.fn>;
-
   beforeEach(() => {
-    localGet = vi.fn().mockResolvedValue({});
-    localSet = vi.fn().mockResolvedValue(undefined);
-
     vi.stubGlobal('browser', {
       downloads: { onCreated: { addListener: vi.fn() }, onChanged: { addListener: vi.fn() } },
       storage: {
         session: { get: vi.fn().mockResolvedValue({}), set: vi.fn().mockResolvedValue(undefined) },
-        local: { get: localGet, set: localSet },
+        local: { get: vi.fn().mockResolvedValue({}), set: vi.fn().mockResolvedValue(undefined) },
       },
     });
   });
@@ -53,15 +54,9 @@ describe('aria2.purgeDownloadResult', () => {
     vi.unstubAllGlobals();
   });
 
-  it('purges completed/error/cancelled tasks from history', async () => {
+  it('calls LocalStore.purgeTerminalHistory', async () => {
     const registry = new MethodRegistry();
     const ctx = createMockCtx();
-    const tasks = [
-      createMockHistoryTask('gid-001', 'complete'),
-      createMockHistoryTask('gid-002', 'error'),
-      createMockHistoryTask('gid-003', 'cancelled'),
-    ];
-    localGet.mockResolvedValue({ [HISTORY_KEY]: tasks });
 
     register(registry);
 
@@ -73,61 +68,17 @@ describe('aria2.purgeDownloadResult', () => {
     const response = await registry.dispatch(req, ctx) as Aria2RpcResponse;
 
     expect(response.result).toBe('OK');
-    expect(localSet).toHaveBeenCalledWith({ [HISTORY_KEY]: [] });
+    expect(ctx.store.local.purgeTerminalHistory).toHaveBeenCalledOnce();
   });
 
-  it('preserves pending/in_progress/paused tasks', async () => {
+  it('returns OK on successful purge', async () => {
     const registry = new MethodRegistry();
     const ctx = createMockCtx();
-    const tasks = [
-      createMockHistoryTask('gid-001', 'pending'),
-      createMockHistoryTask('gid-002', 'in_progress'),
-      createMockHistoryTask('gid-003', 'paused'),
-      createMockHistoryTask('gid-004', 'complete'),
-    ];
-    localGet.mockResolvedValue({ [HISTORY_KEY]: tasks });
 
     register(registry);
 
     const req: Aria2RpcRequest = {
       jsonrpc: '2.0', id: '2', method: 'aria2.purgeDownloadResult',
-      params: [],
-    };
-
-    await registry.dispatch(req, ctx);
-
-    const setCall = localSet.mock.calls[0][0];
-    const updatedHistory = setCall[HISTORY_KEY] as DownloadTask[];
-    expect(updatedHistory).toHaveLength(3);
-    expect(updatedHistory.map((t) => t.status).sort()).toEqual(['in_progress', 'paused', 'pending']);
-  });
-
-  it('returns OK on empty history', async () => {
-    const registry = new MethodRegistry();
-    const ctx = createMockCtx();
-    localGet.mockResolvedValue({ [HISTORY_KEY]: [] });
-
-    register(registry);
-
-    const req: Aria2RpcRequest = {
-      jsonrpc: '2.0', id: '3', method: 'aria2.purgeDownloadResult',
-      params: [],
-    };
-
-    const response = await registry.dispatch(req, ctx) as Aria2RpcResponse;
-
-    expect(response.result).toBe('OK');
-  });
-
-  it('handles missing history key gracefully', async () => {
-    const registry = new MethodRegistry();
-    const ctx = createMockCtx();
-    localGet.mockResolvedValue({});
-
-    register(registry);
-
-    const req: Aria2RpcRequest = {
-      jsonrpc: '2.0', id: '4', method: 'aria2.purgeDownloadResult',
       params: [],
     };
 

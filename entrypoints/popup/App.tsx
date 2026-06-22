@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import {
   MSG_GET_POPUP_STATE,
   MSG_UPDATE_SETTINGS,
+  MSG_UPDATE_PER_SITE,
 } from "@/lib/message-router";
 
 interface InfoItem {
@@ -234,7 +235,19 @@ function App() {
 
   const handleTogglePerSite = useCallback(
     async (enabled: boolean) => {
+      if (!currentOrigin) {
+        addInfo("No active page to control");
+        return;
+      }
       try {
+        const response = (await browser.runtime.sendMessage({
+          type: MSG_UPDATE_PER_SITE,
+          payload: { origin: currentOrigin, enabled },
+        })) as { ok: boolean; error?: string };
+        if (!response.ok && response.error) {
+          addInfo(`Error: ${response.error}`);
+          return;
+        }
         setPerSiteEnabled(enabled);
         addInfo(
           enabled
@@ -246,7 +259,7 @@ function App() {
         addInfo(`Error: ${message}`);
       }
     },
-    [addInfo],
+    [addInfo, currentOrigin],
   );
 
   const handleOpenAriaNg = useCallback(() => {

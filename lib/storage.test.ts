@@ -494,5 +494,88 @@ describe('LocalStore', () => {
       // Most recently added should be first
       expect(history[0].gid).toBe('task-501');
     });
+  describe('removeFromHistory', () => {
+    it('removes a task by GID from history', async () => {
+      const task1 = makeDownloadTask({ gid: 'rm-gid-1' });
+      const task2 = makeDownloadTask({ gid: 'rm-gid-2' });
+      await localStore.set('aria2_download_history', [task1, task2]);
+
+      await LocalStore.removeFromHistory('rm-gid-1');
+
+      const result = await localStore.get('aria2_download_history');
+      const history = result['aria2_download_history'] as DownloadTask[];
+      expect(history).toHaveLength(1);
+      expect(history[0].gid).toBe('rm-gid-2');
+    });
+
+    it('is a no-op when GID not found', async () => {
+      const task = makeDownloadTask({ gid: 'existing' });
+      await localStore.set('aria2_download_history', [task]);
+
+      await LocalStore.removeFromHistory('nonexistent');
+
+      const result = await localStore.get('aria2_download_history');
+      const history = result['aria2_download_history'] as DownloadTask[];
+      expect(history).toHaveLength(1);
+      expect(history[0].gid).toBe('existing');
+    });
+
+    it('handles empty history gracefully', async () => {
+      await localStore.set('aria2_download_history', []);
+
+      await LocalStore.removeFromHistory('any-gid');
+
+      const result = await localStore.get('aria2_download_history');
+      const history = result['aria2_download_history'] as DownloadTask[];
+      expect(history).toEqual([]);
+    });
+  });
+
+  describe('purgeTerminalHistory', () => {
+    it('removes tasks with complete/error/cancelled status', async () => {
+      const tasks: DownloadTask[] = [
+        makeDownloadTask({ gid: 'g-1', status: 'complete' }),
+        makeDownloadTask({ gid: 'g-2', status: 'error' }),
+        makeDownloadTask({ gid: 'g-3', status: 'cancelled' }),
+      ];
+      await localStore.set('aria2_download_history', tasks);
+
+      await LocalStore.purgeTerminalHistory();
+
+      const result = await localStore.get('aria2_download_history');
+      const history = result['aria2_download_history'] as DownloadTask[];
+      expect(history).toEqual([]);
+    });
+
+    it('preserves tasks with pending/in_progress/paused status', async () => {
+      const tasks: DownloadTask[] = [
+        makeDownloadTask({ gid: 'g-1', status: 'complete' }),
+        makeDownloadTask({ gid: 'g-2', status: 'pending' }),
+        makeDownloadTask({ gid: 'g-3', status: 'in_progress' }),
+        makeDownloadTask({ gid: 'g-4', status: 'paused' }),
+        makeDownloadTask({ gid: 'g-5', status: 'error' }),
+      ];
+      await localStore.set('aria2_download_history', tasks);
+
+      await LocalStore.purgeTerminalHistory();
+
+      const result = await localStore.get('aria2_download_history');
+      const history = result['aria2_download_history'] as DownloadTask[];
+      expect(history).toHaveLength(3);
+      const gids = history.map((t) => t.gid).sort();
+      expect(gids).toEqual(['g-2', 'g-3', 'g-4']);
+    });
+
+    it('returns OK on empty history', async () => {
+      await localStore.set('aria2_download_history', []);
+
+      await LocalStore.purgeTerminalHistory();
+
+      const result = await localStore.get('aria2_download_history');
+      const history = result['aria2_download_history'] as DownloadTask[];
+      expect(history).toEqual([]);
+    });
+  });
+
   });
 });

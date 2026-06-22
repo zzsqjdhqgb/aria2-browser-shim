@@ -6,6 +6,7 @@ export const MSG_ARIA2_RPC = 'aria2-rpc';
 export const MSG_GET_SETTINGS = 'get-settings';
 export const MSG_UPDATE_SETTINGS = 'update-settings';
 export const MSG_GET_POPUP_STATE = 'get-popup-state';
+export const MSG_UPDATE_PER_SITE = 'update-per-site';
 
 /**
  * Validates that a payload is a valid JSON-RPC request: either an object

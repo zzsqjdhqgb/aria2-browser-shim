@@ -12,18 +12,25 @@ function createMockCtx(overrides: Partial<HandlerContext> = {}): HandlerContext 
     settings: { ...DEFAULT_SETTINGS },
     store: {
       session: { putTask: vi.fn(), getTask: vi.fn(), getAllTasks: vi.fn(), removeTask: vi.fn() },
-      local: { getSettings: vi.fn(), putSettings: vi.fn(), getPerSiteEnabled: vi.fn(), setPerSiteEnabled: vi.fn(), getDownloadHistory: vi.fn(), addToHistory: vi.fn() },
+      local: {
+        getSettings: vi.fn(),
+        putSettings: vi.fn(),
+        getPerSiteEnabled: vi.fn(),
+        setPerSiteEnabled: vi.fn(),
+        getDownloadHistory: vi.fn(),
+        addToHistory: vi.fn(),
+        removeFromHistory: vi.fn().mockResolvedValue(undefined),
+        purgeTerminalHistory: vi.fn(),
+      },
     },
     ...overrides,
   };
 }
 
-const HISTORY_KEY = 'aria2_download_history';
-
 function createMockHistoryTask(gid: string): DownloadTask {
   return {
     gid,
-    request: { url: `https://example.com/${gid}.zip` },
+    request: { url: 'https://example.com/' + gid + '.zip' },
     status: 'complete',
     bytesReceived: 1024,
     totalBytes: 1024,
@@ -33,18 +40,12 @@ function createMockHistoryTask(gid: string): DownloadTask {
 }
 
 describe('aria2.removeDownloadResult', () => {
-  let localGet: ReturnType<typeof vi.fn>;
-  let localSet: ReturnType<typeof vi.fn>;
-
   beforeEach(() => {
-    localGet = vi.fn().mockResolvedValue({});
-    localSet = vi.fn().mockResolvedValue(undefined);
-
     vi.stubGlobal('browser', {
       downloads: { onCreated: { addListener: vi.fn() }, onChanged: { addListener: vi.fn() } },
       storage: {
         session: { get: vi.fn().mockResolvedValue({}), set: vi.fn().mockResolvedValue(undefined) },
-        local: { get: localGet, set: localSet },
+        local: { get: vi.fn().mockResolvedValue({}), set: vi.fn().mockResolvedValue(undefined) },
       },
     });
   });
@@ -53,11 +54,9 @@ describe('aria2.removeDownloadResult', () => {
     vi.unstubAllGlobals();
   });
 
-  it('removes task from history by GID', async () => {
+  it('calls LocalStore.removeFromHistory with the GID', async () => {
     const registry = new MethodRegistry();
     const ctx = createMockCtx();
-    const task = createMockHistoryTask('gid-001');
-    localGet.mockResolvedValue({ [HISTORY_KEY]: [task] });
 
     register(registry);
 
@@ -69,13 +68,12 @@ describe('aria2.removeDownloadResult', () => {
     const response = await registry.dispatch(req, ctx) as Aria2RpcResponse;
 
     expect(response.result).toBe('OK');
-    expect(localSet).toHaveBeenCalledWith({ [HISTORY_KEY]: [] });
+    expect(ctx.store.local.removeFromHistory).toHaveBeenCalledWith('gid-001');
   });
 
-  it('returns OK even when GID not found', async () => {
+  it('returns OK when GID not found (LocalStore handles gracefully)', async () => {
     const registry = new MethodRegistry();
     const ctx = createMockCtx();
-    localGet.mockResolvedValue({ [HISTORY_KEY]: [] });
 
     register(registry);
 
@@ -87,28 +85,7 @@ describe('aria2.removeDownloadResult', () => {
     const response = await registry.dispatch(req, ctx) as Aria2RpcResponse;
 
     expect(response.result).toBe('OK');
-  });
-
-  it('preserves other tasks in history', async () => {
-    const registry = new MethodRegistry();
-    const ctx = createMockCtx();
-    const task1 = createMockHistoryTask('gid-001');
-    const task2 = createMockHistoryTask('gid-002');
-    localGet.mockResolvedValue({ [HISTORY_KEY]: [task1, task2] });
-
-    register(registry);
-
-    const req: Aria2RpcRequest = {
-      jsonrpc: '2.0', id: '3', method: 'aria2.removeDownloadResult',
-      params: ['gid-001'],
-    };
-
-    await registry.dispatch(req, ctx);
-
-    const setCall = localSet.mock.calls[0][0];
-    const updatedHistory = setCall[HISTORY_KEY] as DownloadTask[];
-    expect(updatedHistory).toHaveLength(1);
-    expect(updatedHistory[0].gid).toBe('gid-002');
+    expect(ctx.store.local.removeFromHistory).toHaveBeenCalledWith('nonexistent');
   });
 
   it('throws error when GID is missing', async () => {
@@ -118,7 +95,7 @@ describe('aria2.removeDownloadResult', () => {
     register(registry);
 
     const req: Aria2RpcRequest = {
-      jsonrpc: '2.0', id: '4', method: 'aria2.removeDownloadResult',
+      jsonrpc: '2.0', id: '3', method: 'aria2.removeDownloadResult',
       params: [],
     };
 

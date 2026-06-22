@@ -1,18 +1,18 @@
+import { MSG_ARIA2_RPC } from "@/lib/message-router";
+
 export default defineContentScript({
   matches: ["<all_urls>"],
   runAt: "document_start",
   main() {
     const LOG_PREFIX = "[ContentBridge]";
-    console.log(LOG_PREFIX, "Initializing...");
 
-    // Listen for requests from MAIN world
     window.addEventListener("aria2-shim-request", async (e) => {
       const detail = (e as CustomEvent).detail;
       const { _requestId, body } = detail;
 
       try {
         const response = await browser.runtime.sendMessage({
-          type: "aria2-rpc",
+          type: MSG_ARIA2_RPC,
           payload: body,
         });
 
@@ -22,7 +22,7 @@ export default defineContentScript({
           }),
         );
       } catch (err) {
-        console.error(LOG_PREFIX, "Error sending to background", err);
+        console.debug(LOG_PREFIX, "Error sending to background", err);
         window.dispatchEvent(
           new CustomEvent("aria2-shim-response", {
             detail: {
@@ -40,7 +40,5 @@ export default defineContentScript({
         );
       }
     });
-
-    console.log(LOG_PREFIX, "Ready");
   },
 });

@@ -280,17 +280,15 @@ export class DownloadManager {
       return;
     }
 
-    // Match by closest createdAt timestamp
-    const now = Date.now();
+    // FIFO: match the oldest pending task (smallest createdAt)
     let bestMatch: DownloadTask | undefined;
     let bestIndex = -1;
-    let bestDiff = Infinity;
+    let oldestTime = Infinity;
 
     for (let i = 0; i < pendingList.length; i++) {
       const task = pendingList[i];
-      const diff = Math.abs(task.createdAt - now);
-      if (diff < bestDiff) {
-        bestDiff = diff;
+      if (task.createdAt < oldestTime) {
+        oldestTime = task.createdAt;
         bestMatch = task;
         bestIndex = i;
       }
@@ -413,20 +411,27 @@ export class DownloadManager {
 
     this.emit(task);
 
-    // Remove from pending maps
-    const url = task.request.url;
-    const pendingList = this.pendingByUrl.get(url);
-    if (pendingList) {
-      const filtered = pendingList.filter((t) => t.gid !== gid);
-      if (filtered.length === 0) {
-        this.pendingByUrl.delete(url);
-      } else {
-        this.pendingByUrl.set(url, filtered);
-      }
-    }
+    // Remove from pending maps (all keys including redirect URLs)
+    this.removeFromPendingByUrl(task);
 
     this.pendingTimeouts.delete(gid);
     await this.finalizeTask(task);
+  }
+
+  /**
+   * Removes a task from all entries in the pendingByUrl map.
+   * Handles the redirect case where a task might appear under a finalUrl key
+   * different from its request.url key.
+   */
+  private removeFromPendingByUrl(task: DownloadTask): void {
+    for (const [key, pendingList] of this.pendingByUrl.entries()) {
+      const filtered = pendingList.filter((t) => t.gid !== task.gid);
+      if (filtered.length === 0) {
+        this.pendingByUrl.delete(key);
+      } else if (filtered.length !== pendingList.length) {
+        this.pendingByUrl.set(key, filtered);
+      }
+    }
   }
 
   /**
@@ -451,17 +456,8 @@ export class DownloadManager {
     // Remove from memory cache first (prevent duplicate lookups)
     this.cache.delete(task.gid);
 
-    // Clean up pending maps
-    const url = task.request.url;
-    const pendingList = this.pendingByUrl.get(url);
-    if (pendingList) {
-      const filtered = pendingList.filter((t) => t.gid !== task.gid);
-      if (filtered.length === 0) {
-        this.pendingByUrl.delete(url);
-      } else {
-        this.pendingByUrl.set(url, filtered);
-      }
-    }
+    // Clean up ALL pendingByUrl entries (handles redirects via finalUrl)
+    this.removeFromPendingByUrl(task);
 
     this.clearPendingTimeout(task.gid);
 

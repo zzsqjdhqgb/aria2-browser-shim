@@ -126,4 +126,26 @@ export namespace LocalStore {
     const updated = [task, ...history].slice(0, MAX_HISTORY);
     await browser.storage.local.set({ [HISTORY_KEY]: updated });
   }
+
+  /**
+   * Removes a task from the download history by GID.
+   */
+  export async function removeFromHistory(gid: string): Promise<void> {
+    const result = await browser.storage.local.get({ [HISTORY_KEY]: [] });
+    const history: DownloadTask[] = Array.isArray(result[HISTORY_KEY]) ? result[HISTORY_KEY] : [];
+    const updated = history.filter((t) => t.gid !== gid);
+    await browser.storage.local.set({ [HISTORY_KEY]: updated });
+  }
+
+  /**
+   * Removes all terminal (complete/error/cancelled) tasks from download history,
+   * preserving only active tasks (pending/in_progress/paused).
+   */
+  export async function purgeTerminalHistory(): Promise<void> {
+    const TERMINAL = new Set(['complete', 'error', 'cancelled']);
+    const result = await browser.storage.local.get({ [HISTORY_KEY]: [] });
+    const history: DownloadTask[] = Array.isArray(result[HISTORY_KEY]) ? result[HISTORY_KEY] : [];
+    const updated = history.filter((t) => !TERMINAL.has(t.status));
+    await browser.storage.local.set({ [HISTORY_KEY]: updated });
+  }
 }
