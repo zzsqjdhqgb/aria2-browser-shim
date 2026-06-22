@@ -1,171 +1,203 @@
-// entrypoints/content.ts
-const LOG_PREFIX = "[ContentMain]";
-
 export default defineContentScript({
-    matches: ["<all_urls>"],
-    runAt: "document_start",
-    world: "MAIN",
-    main() {
-        console.log(`${LOG_PREFIX} Initializing interceptors on ${window.location.href}`);
+  matches: ["<all_urls>"],
+  runAt: "document_start",
+  world: "MAIN",
+  main() {
+    /**
+     * Checks whether a URL targets the aria2 JSON-RPC endpoint.
+     * Uses proper URL parsing to avoid substring-match false positives.
+     */
+    function isAria2Url(url: string): boolean {
+      try {
+        const parsed = new URL(url);
+        return (
+          (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1") &&
+          parsed.port === "6800"
+        );
+      } catch {
+        return false;
+      }
+    }
 
-        // ============ 拦截 fetch ============
-        const originalFetch = window.fetch;
-        window.fetch = async function (input, init) {
-            const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    /**
+     * Sends a JSON-RPC body to the bridge via a CustomEvent and returns the
+     * response.  Each request carries a unique crypto.randomUUID() requestId.
+     * The response listener filters by that id and resolves the promise.
+     * A 30 s timeout rejects the promise to prevent hanging forever.
+     */
+    function sendToBridge(body: unknown): Promise<unknown> {
+      const requestId = crypto.randomUUID();
 
-            if (url.includes("localhost:6800") || url.includes("127.0.0.1:6800")) {
-                console.log(`${LOG_PREFIX} Intercepted fetch to ${url}`);
-                return handleAria2Request(init?.body as string);
-            }
+      return new Promise<unknown>((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          window.removeEventListener("aria2-shim-response", handler);
+          reject(new Error("sendToBridge: request timed out after 30s"));
+        }, 30_000);
 
-            return originalFetch.call(this, input, init);
-        };
+        function handler(event: Event): void {
+          const detail = (event as CustomEvent).detail;
+          if (!detail || detail._requestId !== requestId) return;
 
-        // ============ 拦截 WebSocket ============
-        const OriginalWebSocket = window.WebSocket;
-
-        class FakeWebSocket extends EventTarget {
-            static readonly CONNECTING = 0;
-            static readonly OPEN = 1;
-            static readonly CLOSING = 2;
-            static readonly CLOSED = 3;
-
-            readonly CONNECTING = 0;
-            readonly OPEN = 1;
-            readonly CLOSING = 2;
-            readonly CLOSED = 3;
-
-            readyState: number = FakeWebSocket.CONNECTING;
-            url: string;
-            protocol: string = "";
-            extensions: string = "";
-            bufferedAmount: number = 0;
-            binaryType: BinaryType = "blob";
-
-            onopen: ((ev: Event) => void) | null = null;
-            onclose: ((ev: CloseEvent) => void) | null = null;
-            onmessage: ((ev: MessageEvent) => void) | null = null;
-            onerror: ((ev: Event) => void) | null = null;
-
-            constructor(url: string | URL, protocols?: string | string[]) {
-                super();
-                this.url = url.toString();
-                console.log(`${LOG_PREFIX} Intercepted WebSocket connection to ${this.url}`);
-
-                // 模拟异步连接成功
-                setTimeout(() => {
-                    this.readyState = FakeWebSocket.OPEN;
-                    const openEvent = new Event("open");
-                    this.onopen?.(openEvent);
-                    this.dispatchEvent(openEvent);
-                    console.log(`${LOG_PREFIX} Fake WebSocket opened`);
-                }, 0);
-            }
-
-            send(data: string | ArrayBuffer | Blob | ArrayBufferView): void {
-                if (this.readyState !== FakeWebSocket.OPEN) {
-                    throw new DOMException("WebSocket is not open", "InvalidStateError");
-                }
-
-                console.log(`${LOG_PREFIX} WebSocket send:`, data);
-
-                // 处理消息并返回响应
-                this.handleMessage(data as string);
-            }
-
-            private async handleMessage(data: string): Promise<void> {
-                try {
-                    const response = await sendToBackground(JSON.parse(data));
-                    const messageEvent = new MessageEvent("message", {
-                        data: JSON.stringify(response),
-                    });
-
-                    console.log(`${LOG_PREFIX} WebSocket response:`, response);
-                    this.onmessage?.(messageEvent);
-                    this.dispatchEvent(messageEvent);
-                } catch (err) {
-                    console.error(`${LOG_PREFIX} WebSocket handle error:`, err);
-                }
-            }
-
-            close(code?: number, reason?: string): void {
-                console.log(`${LOG_PREFIX} WebSocket close requested`);
-                this.readyState = FakeWebSocket.CLOSING;
-
-                setTimeout(() => {
-                    this.readyState = FakeWebSocket.CLOSED;
-                    const closeEvent = new CloseEvent("close", {
-                        code: code ?? 1000,
-                        reason: reason ?? "",
-                        wasClean: true,
-                    });
-                    this.onclose?.(closeEvent);
-                    this.dispatchEvent(closeEvent);
-                }, 0);
-            }
+          clearTimeout(timeout);
+          window.removeEventListener("aria2-shim-response", handler);
+          resolve(detail.data);
         }
 
-        // 替换全局 WebSocket（仅针对 aria2 地址）
-        window.WebSocket = new Proxy(OriginalWebSocket, {
-            construct(target, args: [string | URL, (string | string[])?]) {
-                const url = args[0].toString();
+        window.addEventListener("aria2-shim-response", handler);
 
-                if (url.includes("localhost:6800") || url.includes("127.0.0.1:6800")) {
-                    console.log(`${LOG_PREFIX} Creating fake WebSocket for aria2`);
-                    return new FakeWebSocket(url, args[1]);
-                }
+        window.dispatchEvent(
+          new CustomEvent("aria2-shim-request", {
+            detail: { _requestId: requestId, body },
+          }),
+        );
+      });
+    }
 
-                // 其他 WebSocket 正常创建
-                return new target(...args);
-            },
-        }) as typeof WebSocket;
+    /**
+     * Constructs a synthetic fetch Response from the bridge result.
+     */
+    function buildFakeResponse(result: unknown): Response {
+      return new Response(JSON.stringify(result), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
 
-        // ============ 通用处理函数 ============
+    // ====================================================================
+    // Fetch interception
+    // ====================================================================
 
-        async function sendToBackground(body: unknown): Promise<unknown> {
-            const requestId = crypto.randomUUID();
+    const originalFetch = window.fetch.bind(window);
 
-            return new Promise((resolve, reject) => {
-                const timeout = setTimeout(() => {
-                    window.removeEventListener("aria2-shim-response", handler as EventListener);
-                    reject(new Error("Request timeout"));
-                }, 30000);
+    async function patchedFetch(
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ): Promise<Response> {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
 
-                const handler = (e: CustomEvent) => {
-                    if (e.detail?._requestId !== requestId) return;
-                    window.removeEventListener("aria2-shim-response", handler as EventListener);
-                    resolve(e.detail.data);
-                };
+      if (!isAria2Url(url)) {
+        return originalFetch(input, init);
+      }
 
-                window.addEventListener("aria2-shim-response", handler as EventListener);
-                window.dispatchEvent(
-                    new CustomEvent("aria2-shim-request", {
-                        detail: { _requestId: requestId, body }
-                    })
-                );
-            });
+      let parsedBody: unknown = null;
+      if (init?.body) {
+        try {
+          parsedBody = JSON.parse(init.body as string);
+        } catch {
+          // If the body is not valid JSON we still forward it — the bridge
+          // or the actual aria2c would have to deal with it.
+        }
+      }
+
+      const result = await sendToBridge(parsedBody ?? init?.body ?? null);
+      return buildFakeResponse(result);
+    }
+
+    window.fetch = patchedFetch as typeof window.fetch;
+
+    // ====================================================================
+    // WebSocket interception
+    // ====================================================================
+
+    const OriginalWebSocket = window.WebSocket;
+
+    class FakeWebSocket extends EventTarget {
+      static readonly CONNECTING = 0;
+      static readonly OPEN = 1;
+      static readonly CLOSING = 2;
+      static readonly CLOSED = 3;
+
+      readonly CONNECTING = 0;
+      readonly OPEN = 1;
+      readonly CLOSING = 2;
+      readonly CLOSED = 3;
+
+      url: string;
+      readyState: number = FakeWebSocket.CONNECTING;
+
+      onopen: ((event: Event) => void) | null = null;
+      onclose: ((event: CloseEvent) => void) | null = null;
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: ((event: Event) => void) | null = null;
+
+      constructor(url: string | URL, _protocols?: string | string[]) {
+        super();
+        this.url = url.toString();
+
+        // Simulate an async connection as established immediately.
+        setTimeout(() => {
+          this.readyState = FakeWebSocket.OPEN;
+          const openEvent = new Event("open");
+          this.onopen?.(openEvent);
+          this.dispatchEvent(openEvent);
+        }, 0);
+      }
+
+      send(data: string): void {
+        if (this.readyState !== FakeWebSocket.OPEN) {
+          throw new DOMException(
+            "WebSocket is not OPEN",
+            "InvalidStateError",
+          );
         }
 
-        async function handleAria2Request(bodyStr: string | null): Promise<Response> {
-            try {
-                const body = bodyStr ? JSON.parse(bodyStr) : null;
-                if (body) {
-                    const result = await sendToBackground(body);
-                    return new Response(JSON.stringify(result), {
-                        status: 200,
-                        headers: { "Content-Type": "application/json" },
-                    });
-                }
-            } catch (e) {
-                console.error(`${LOG_PREFIX} Handle request error:`, e);
-            }
+        this.handleMessage(data);
+      }
 
-            return new Response(JSON.stringify({ error: "Invalid request" }), {
-                status: 400,
-                headers: { "Content-Type": "application/json" },
-            });
+      close(code?: number, reason?: string): void {
+        this.readyState = FakeWebSocket.CLOSING;
+
+        setTimeout(() => {
+          this.readyState = FakeWebSocket.CLOSED;
+          const closeEvent = new CloseEvent("close", {
+            code: code ?? 1000,
+            reason: reason ?? "",
+            wasClean: true,
+          });
+          this.onclose?.(closeEvent);
+          this.dispatchEvent(closeEvent);
+        }, 0);
+      }
+
+      private async handleMessage(data: string): Promise<void> {
+        try {
+          const parsed = JSON.parse(data);
+          const result = await sendToBridge(parsed);
+
+          const messageEvent = new MessageEvent("message", {
+            data: JSON.stringify(result),
+          });
+
+          this.onmessage?.(messageEvent);
+          this.dispatchEvent(messageEvent);
+        } catch (_err: unknown) {
+          const errorEvent = new Event("error");
+          this.onerror?.(errorEvent);
+          this.dispatchEvent(errorEvent);
+        }
+      }
+    }
+
+    // Proxy the global WebSocket constructor so aria2 URLs get a
+    // FakeWebSocket while everything else uses the real implementation.
+    window.WebSocket = new Proxy(OriginalWebSocket, {
+      construct(
+        target,
+        args: [string | URL, (string | string[])?],
+      ) {
+        const url = args[0].toString();
+
+        if (isAria2Url(url)) {
+          return new FakeWebSocket(url, args[1]);
         }
 
-        console.log(`${LOG_PREFIX} Fetch and WebSocket interceptors installed`);
-    },
+        return new target(...args);
+      },
+    }) as typeof WebSocket;
+  },
 });
