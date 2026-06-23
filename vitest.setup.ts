@@ -1,1 +1,71 @@
 import 'fake-indexeddb/auto';
+
+// Minimal chrome API mock — modules check typeof chrome !== 'undefined' before using
+const noop = () => {};
+(globalThis as any).chrome = {
+  runtime: {
+    id: 'test-extension-id',
+    onMessage: { addListener: noop, removeListener: noop },
+    onConnect: { addListener: noop, removeListener: noop },
+    sendMessage: noop,
+    connect: noop,
+    getURL: (path: string) => `chrome-extension://test-id${path}`,
+    lastError: undefined,
+    onInstalled: { addListener: noop },
+    onStartup: { addListener: noop },
+    onSuspend: { addListener: noop },
+  },
+  downloads: {
+    onCreated: { addListener: noop },
+    onChanged: { addListener: noop },
+    onErased: { addListener: noop },
+    download: noop,
+    search: noop,
+    pause: noop,
+    resume: noop,
+    cancel: noop,
+    open: noop,
+    show: noop,
+    showDefaultFolder: noop,
+    erase: noop,
+    removeFile: noop,
+    acceptDanger: noop,
+    setShelfEnabled: noop,
+  },
+  declarativeNetRequest: {
+    updateSessionRules: noop,
+    updateDynamicRules: noop,
+    getSessionRules: noop,
+    getDynamicRules: noop,
+    RuleActionType: { MODIFY_HEADERS: 'modifyHeaders' as any },
+    ResourceType: { MAIN_FRAME: 'main_frame' as any },
+    HeaderOperation: { SET: 'set' as any },
+  },
+  tabs: {
+    create: () => Promise.resolve({ id: 999, index: 0, windowId: 1, active: false, pinned: false, highlighted: false, incognito: false, selected: false, discarded: false, autoDiscardable: false, groupId: -1 }),
+    remove: () => Promise.resolve(),
+    query: noop,
+    get: noop,
+    getCurrent: noop,
+    update: noop,
+    onCreated: { addListener: noop },
+    onRemoved: { addListener: noop },
+    onUpdated: { addListener: noop },
+  },
+  storage: {
+    sync: {
+      get: noop,
+      set: noop,
+      remove: noop,
+      clear: noop,
+      getBytesInUse: noop,
+    },
+    local: {
+      get: noop,
+      set: noop,
+      remove: noop,
+      clear: noop,
+      getBytesInUse: noop,
+    },
+  },
+};

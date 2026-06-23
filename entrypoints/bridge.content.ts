@@ -3,16 +3,8 @@ export default defineContentScript({
   runAt: 'document_start',
   world: 'ISOLATED',
   main() {
-    let relay: HTMLSpanElement | null = null;
     let wsPort: chrome.runtime.Port | null = null;
     let eventPort: chrome.runtime.Port | null = null;
-
-    function getRelay(): HTMLSpanElement {
-      if (!relay) {
-        relay = document.getElementById('__aria2shim_relay__') as HTMLSpanElement;
-      }
-      return relay!;
-    }
 
     document.addEventListener('__aria2shim_request__', ((e: CustomEvent) => {
       const { requestId, type, payload } = e.detail;
@@ -20,14 +12,15 @@ export default defineContentScript({
       if (type === 'rpc') {
         chrome.runtime.sendMessage({ type: 'aria2-rpc', requestId, payload }).then((response: any) => {
           const r = response?.response;
-          getRelay().dispatchEvent(new CustomEvent('__aria2shim_response__', {
-            detail: { requestId, result: r?.result ?? r },
+          // Pass the full JSON-RPC envelope (result field is the method return value)
+          document.dispatchEvent(new CustomEvent('__aria2shim_response__', {
+            detail: { requestId, result: r },
           }));
         }).catch((err) => {
-          getRelay().dispatchEvent(new CustomEvent('__aria2shim_response__', {
+          document.dispatchEvent(new CustomEvent('__aria2shim_response__', {
             detail: {
               requestId,
-              error: { code: -32603, message: err.message || 'Bridge error' },
+              result: { jsonrpc: '2.0', id: null, error: { code: -32603, message: err.message || 'Bridge error' } },
             },
           }));
         });
@@ -48,9 +41,9 @@ export default defineContentScript({
         wsPort.onMessage.addListener((message: any) => {
           const { requestId, response } = message;
           if (!response) return;
-
-          getRelay().dispatchEvent(new CustomEvent('__aria2shim_response__', {
-            detail: { requestId, result: response.result ?? response },
+          // Pass the full JSON-RPC envelope
+          document.dispatchEvent(new CustomEvent('__aria2shim_response__', {
+            detail: { requestId, result: response },
           }));
         });
 
@@ -66,7 +59,7 @@ export default defineContentScript({
           eventPort = chrome.runtime.connect({ name: 'aria2-ws' });
           eventPort.onMessage.addListener((msg: any) => {
             if (msg.method && msg.method.startsWith('aria2.on')) {
-              getRelay().dispatchEvent(new CustomEvent('__aria2shim_wsevent__', {
+              document.dispatchEvent(new CustomEvent('__aria2shim_wsevent__', {
                 detail: { wsId, method: msg.method, params: msg.params },
               }));
             }

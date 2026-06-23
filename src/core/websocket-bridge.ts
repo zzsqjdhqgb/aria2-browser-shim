@@ -14,11 +14,13 @@ export class WebSocketBridge {
         const portId = port.sender?.tab?.id ?? Date.now();
         this.ports.set(portId, port);
 
-        port.postMessage({
-          jsonrpc: '2.0',
-          method: 'aria2.onConnect',
-          params: [{ portId }],
-        });
+        try {
+          port.postMessage({
+            jsonrpc: '2.0',
+            method: 'aria2.onConnect',
+            params: [{ portId }],
+          });
+        } catch { /* port may be dead */ }
 
         port.onDisconnect.addListener(() => {
           this.ports.delete(portId);

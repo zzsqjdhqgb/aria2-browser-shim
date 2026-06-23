@@ -18,10 +18,9 @@ export default defineContentScript({
       }
     }
 
-    const relay = document.createElement('span');
-    relay.id = '__aria2shim_relay__';
-    relay.style.display = 'none';
-    document.documentElement?.appendChild(relay);
+    // Use document as the shared event target (works even at document_start
+    // when documentElement is not yet available)
+    const bus = document;
 
     let requestCounter = 0;
     const pendingRequests = new Map<number, {
@@ -29,7 +28,7 @@ export default defineContentScript({
       reject: (reason: Error) => void;
     }>();
 
-    relay.addEventListener('__aria2shim_response__', ((e: CustomEvent) => {
+    bus.addEventListener('__aria2shim_response__', ((e: CustomEvent) => {
       const { requestId, result, error, data } = e.detail;
       const pending = pendingRequests.get(requestId);
       if (!pending) return;
@@ -44,7 +43,7 @@ export default defineContentScript({
       pending.resolve(data !== undefined ? data : JSON.stringify(result));
     }) as EventListener);
 
-    relay.addEventListener('__aria2shim_wsevent__', ((e: CustomEvent) => {
+    bus.addEventListener('__aria2shim_wsevent__', ((e: CustomEvent) => {
       const { wsId, method, params } = e.detail;
       const ws = wsInstances.get(wsId);
       if (!ws) return;
@@ -87,7 +86,7 @@ export default defineContentScript({
           },
         });
 
-        relay.dispatchEvent(new CustomEvent('__aria2shim_request__', {
+        bus.dispatchEvent(new CustomEvent('__aria2shim_request__', {
           detail: { requestId, type, payload },
         }));
       });
@@ -194,7 +193,7 @@ export default defineContentScript({
         this.wsId = ++wsIdCounter;
         wsInstances.set(this.wsId, this);
 
-        relay.dispatchEvent(new CustomEvent('__aria2shim_wsconnect__', {
+        bus.dispatchEvent(new CustomEvent('__aria2shim_wsconnect__', {
           detail: { wsId: this.wsId, url },
         }));
 
@@ -221,7 +220,7 @@ export default defineContentScript({
         if (this.readyState === 3) return;
         this.readyState = 3;
 
-        relay.dispatchEvent(new CustomEvent('__aria2shim_wsclose__', {
+        bus.dispatchEvent(new CustomEvent('__aria2shim_wsclose__', {
           detail: { wsId: this.wsId, code, reason },
         }));
 

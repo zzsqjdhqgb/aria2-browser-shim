@@ -74,7 +74,7 @@ export default defineBackground(() => {
     }
 
     if (msg.type === 'openUI') {
-      const uiUrl = chrome.runtime.getURL('/ui/index.html');
+      const uiUrl = chrome.runtime.getURL('/ui.html');
       chrome.tabs.create({ url: uiUrl });
       sendResponse({ success: true });
       return false;
