@@ -1,0 +1,32 @@
+specification {
+  element person {
+    style { shape person }
+  }
+  element externalSystem {
+    style { shape browser }
+  }
+  element container {
+    style { shape mobile }
+  }
+  element component {
+    style { shape component }
+  }
+  element contract {
+    style {
+      shape component
+      border dashed
+    }
+  }
+
+  relationship calls { line solid }
+  relationship message { line dashed }
+  relationship implements { line dotted }
+
+  tag transport
+  tag protocol
+  tag handler
+  tag engine
+  tag persistence
+  tag external
+  tag contract
+}

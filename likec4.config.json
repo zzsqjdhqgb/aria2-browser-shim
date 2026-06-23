@@ -1,0 +1,5 @@
+{
+  "$schema": "https://likec4.dev/schemas/config.json",
+  "name": "aria2-shim",
+  "title": "Aria2 Browser Shim — Architecture"
+}

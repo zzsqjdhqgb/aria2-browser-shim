@@ -1,0 +1,241 @@
+model {
+  // ══════════════════════════════════════════════════════
+  // External
+  // ══════════════════════════════════════════════════════
+
+  user = person "User"
+
+  userscript = externalSystem "UserScript" {
+    description "Third-party UserScripts that send aria2 JSON-RPC via fetch/WebSocket to localhost:6800"
+  }
+
+  browser-apis = externalSystem "Browser Extension APIs" {
+    #external
+    description "Chrome / Firefox Manifest V3 extension APIs"
+
+    tabs = component "tabs API" {
+      description "tabs.create / tabs.remove for background-tab strategy"
+    }
+    downloads = component "downloads API" {
+      description "downloads.onCreated / onChanged for tracking"
+    }
+    dnr = component "declarativeNetRequest API" {
+      description "updateSessionRules for header injection"
+    }
+  }
+
+  // ══════════════════════════════════════════════════════
+  // Aria2 Browser Shim
+  // ══════════════════════════════════════════════════════
+
+  shim = container "Aria2 Browser Shim" {
+    description """
+      Browser extension (Manifest V3) simulates aria2 JSON-RPC,
+      redirecting downloads to the browser's native download manager
+    """
+
+    // ── Interfaces (TypeScript abstractions) ──
+
+    transport-iface = contract "Transport" {
+      #contract
+      description "Receives raw JSON-RPC from any source → returns response. Decouples protocol from interception."
+    }
+    handler-iface = contract "MethodHandler" {
+      #contract
+      description "Handles single aria2 method. Props: method string, handle(params, rpcId): Promise<unknown>"
+    }
+    download-strategy-iface = contract "DownloadStrategy" {
+      #contract
+      description "Pluggable download execution: canHandle, execute, pause, resume, cancel"
+    }
+    task-repo-iface = contract "TaskRepository" {
+      #contract
+      description "CRUD for DownloadTask: create, update, get, query, remove"
+    }
+
+    // ── Transport Layer ──
+
+    transport = component "Transport Layer" {
+      #transport
+      description "Interception + cross-world bridging + delivery"
+
+      fetch-interceptor = component "FetchInterceptor" {
+        description "Patches window.fetch in MAIN world. Intercepts localhost:6800, extracts JSON-RPC."
+      }
+      websocket-interceptor = component "WebSocketInterceptor" {
+        description "Proxies window.WebSocket in MAIN world. Fake WS routes messages through shim."
+      }
+      transport-bus = component "TransportBus" {
+        description "CustomEvent-based bus in MAIN world. Routes intercepted requests to bridge."
+      }
+      message-bridge = component "MessageBridge" {
+        description "ISOLATED world script. Bridges MAIN world (CustomEvent) ↔ background (runtime.sendMessage)."
+      }
+      transport-hub = component "TransportHub" {
+        description "Entry point in Service Worker. Forwards raw JSON-RPC to Protocol Layer."
+      }
+    }
+
+    // ── Protocol Layer ──
+
+    protocol = component "Protocol Layer" {
+      #protocol
+      description "JSON-RPC 2.0 parsing, routing, formatting"
+
+      jsonrpc-parser = component "JsonRpcParser" {
+        description "Validates/parses JSON-RPC 2.0 requests. Supports single and batch."
+      }
+      method-router = component "MethodRouter" {
+        description "Registry of MethodHandlers. Routes method name → handler."
+      }
+      jsonrpc-formatter = component "JsonRpcFormatter" {
+        description "Formats handler results/errors → JSON-RPC 2.0 response."
+      }
+    }
+
+    // ── Method Handlers ──
+
+    handlers = component "Method Handlers" {
+      #handler
+      description "Per-method aria2 RPC implementations. Each independently testable."
+
+      add-uri = component "AddUriHandler" {
+        description "Handles aria2.addUri. Parses URIs+options→DownloadRequest, delegates to orchestrator."
+      }
+      tell-status = component "TellStatusHandler" {
+        description "Handles aria2.tellStatus. Queries TaskRepository, formats aria2 status."
+      }
+      tell-active = component "TellActiveHandler" {
+        description "Handles aria2.tellActive. Returns active (in_progress/paused) tasks."
+      }
+      pause = component "PauseHandler" {
+        description "Handles aria2.pause / aria2.forcePause → download strategy."
+      }
+      unpause = component "UnpauseHandler" {
+        description "Handles aria2.unpause → download strategy."
+      }
+      remove = component "RemoveHandler" {
+        description "Handles aria2.remove / aria2.forceRemove. Cancels + removes task."
+      }
+      system-methods = component "SystemMethods" {
+        description "Handles getVersion, getGlobalStat, getSessionInfo, etc."
+      }
+    }
+
+    // ── Download Engine ──
+
+    engine = component "Download Engine" {
+      #engine
+      description "Orchestrates download lifecycle: strategy, tracking, progress"
+
+      orchestrator = component "DownloadOrchestrator" {
+        description "Central coordinator. Accepts DownloadRequest, picks strategy, manages lifecycle."
+      }
+      strategy-selector = component "StrategySelector" {
+        description "Picks appropriate DownloadStrategy by request characteristics."
+      }
+      tab-strategy = component "TabDownloadStrategy" {
+        description "tabs.create + DNR rules. Needed because downloads.download() ignores DNR."
+      }
+      direct-strategy = component "DirectDownloadStrategy" {
+        description "browser.downloads.download() for simple downloads without header injection."
+      }
+    }
+
+    // ── Persistence ──
+
+    persistence = component "Persistence Layer" {
+      #persistence
+      description "Task state storage"
+
+      inmemory-repo = component "InMemoryTaskRepository" {
+        description "In-memory Map-based TaskRepository. IndexedDB planned for future."
+      }
+    }
+
+    // ── Composition Root ──
+
+    composition-root = component "CompositionRoot" {
+      description """
+        Entry point (background.ts). Wires all deps via constructor injection:
+        TaskRepository → Strategies → Orchestrator → Handlers → Router → Parser → Hub
+      """
+    }
+  }
+
+  // ══════════════════════════════════════════════════════
+  // Relationships
+  // ══════════════════════════════════════════════════════
+
+  // User → UserScript
+  user -> userscript "installs and uses"
+
+  // UserScript → interceptors
+  userscript -> shim.transport.fetch-interceptor "fetch('http://localhost:6800/jsonrpc')"
+  userscript -> shim.transport.websocket-interceptor "WebSocket to localhost:6800"
+
+  // Interceptor → TransportBus
+  shim.transport.fetch-interceptor -> shim.transport.transport-bus "CustomEvent with request body"
+  shim.transport.websocket-interceptor -> shim.transport.transport-bus "CustomEvent with message"
+
+  // TransportBus → MessageBridge (cross-world)
+  shim.transport.transport-bus -> shim.transport.message-bridge "CustomEvent across worlds"
+
+  // MessageBridge → TransportHub (ISOLATED → background)
+  shim.transport.message-bridge -> shim.transport.transport-hub "runtime.sendMessage({ type: 'aria2-rpc' })"
+
+  // TransportHub → Protocol
+  shim.transport.transport-hub -> shim.protocol.jsonrpc-parser "raw JSON-RPC string"
+
+  // Protocol internal
+  shim.protocol.jsonrpc-parser -> shim.protocol.method-router "parsed { method, params, id }"
+  shim.protocol.method-router -> shim.protocol.jsonrpc-formatter "result or error object"
+
+  // Router → Handlers
+  shim.protocol.method-router -> shim.handlers.add-uri "routes 'aria2.addUri'"
+  shim.protocol.method-router -> shim.handlers.tell-status "routes 'aria2.tellStatus'"
+  shim.protocol.method-router -> shim.handlers.tell-active "routes 'aria2.tellActive'"
+  shim.protocol.method-router -> shim.handlers.pause "routes 'aria2.pause' / 'forcePause'"
+  shim.protocol.method-router -> shim.handlers.unpause "routes 'aria2.unpause'"
+  shim.protocol.method-router -> shim.handlers.remove "routes 'aria2.remove' / 'forceRemove'"
+  shim.protocol.method-router -> shim.handlers.system-methods "routes getVersion/getGlobalStat/etc"
+
+  // Handlers → Engine (write)
+  shim.handlers.add-uri -> shim.engine.orchestrator "creates download"
+  shim.handlers.pause -> shim.engine.orchestrator "pause"
+  shim.handlers.unpause -> shim.engine.orchestrator "resume"
+  shim.handlers.remove -> shim.engine.orchestrator "cancel"
+
+  // Handlers → Persistence (read)
+  shim.handlers.tell-status -> shim.persistence.inmemory-repo "queries task"
+  shim.handlers.tell-active -> shim.persistence.inmemory-repo "queries active"
+
+  // Orchestrator internal
+  shim.engine.orchestrator -> shim.engine.strategy-selector "select strategy"
+  shim.engine.orchestrator -> shim.persistence.inmemory-repo "CRUD tasks"
+
+  // StrategySelector → Strategies
+  shim.engine.strategy-selector -> shim.engine.tab-strategy "header injection needed"
+  shim.engine.strategy-selector -> shim.engine.direct-strategy "simple downloads"
+
+  // Strategies → Browser APIs
+  shim.engine.tab-strategy -> browser-apis.tabs "tabs.create / tabs.remove"
+  shim.engine.tab-strategy -> browser-apis.dnr "updateSessionRules"
+  shim.engine.direct-strategy -> browser-apis.downloads "downloads.download()"
+
+  // Orchestrator → Browser APIs (tracking)
+  shim.engine.orchestrator -> browser-apis.downloads "onCreated / onChanged"
+
+  // ── Interface implementations ──
+  shim.transport.transport-hub -[implements]-> shim.transport-iface "implements"
+  shim.handlers.add-uri -[implements]-> shim.handler-iface "implements"
+  shim.engine.tab-strategy -[implements]-> shim.download-strategy-iface "implements"
+  shim.engine.direct-strategy -[implements]-> shim.download-strategy-iface "implements"
+  shim.persistence.inmemory-repo -[implements]-> shim.task-repo-iface "implements"
+
+  // ── Composition Root wiring ──
+  shim.composition-root -> shim.transport.transport-hub "constructs & injects"
+  shim.composition-root -> shim.protocol.method-router "constructs & injects"
+  shim.composition-root -> shim.engine.orchestrator "constructs & injects"
+  shim.composition-root -> shim.persistence.inmemory-repo "constructs & injects"
+}

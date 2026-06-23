@@ -1,0 +1,257 @@
+views {
+
+  // ══════════════════════════════════════════════════════
+  // 1. System Context — high-level overview
+  // ══════════════════════════════════════════════════════
+
+  view system-context {
+    title "System Context — Aria2 Browser Shim"
+
+    include shim, user, userscript, browser-apis
+    include shim -> browser-apis
+    include user -> userscript
+    include userscript -> shim
+
+    style shim {
+      color primary
+    }
+    style browser-apis {
+      color muted
+    }
+  }
+
+  // ══════════════════════════════════════════════════════
+  // 2. Container View — layers
+  // ══════════════════════════════════════════════════════
+
+  view container-layers {
+    title "Container View — Five Architectural Layers"
+
+    include shim.*, browser-apis.*
+    include shim.* -> browser-apis.*
+    include shim.composition-root
+
+    style shim.transport {
+      color amber
+    }
+    style shim.protocol {
+      color indigo
+    }
+    style shim.handlers {
+      color green
+    }
+    style shim.engine {
+      color blue
+    }
+    style shim.persistence {
+      color gray
+    }
+  }
+
+  // ══════════════════════════════════════════════════════
+  // 3. Component Architecture — full detail
+  // ══════════════════════════════════════════════════════
+
+  view component-all {
+    title "Component Architecture — Full Detail"
+
+    include shim.**
+    include browser-apis.**
+    include userscript
+
+    // Interfaces
+    include shim.transport-iface
+    include shim.handler-iface
+    include shim.download-strategy-iface
+    include shim.task-repo-iface
+
+    style shim.transport.** {
+      color amber
+    }
+    style shim.protocol.** {
+      color indigo
+    }
+    style shim.handlers.** {
+      color green
+    }
+    style shim.engine.** {
+      color blue
+    }
+    style shim.persistence.** {
+      color gray
+    }
+    style shim.transport-iface {
+      color muted
+      border dashed
+    }
+    style shim.handler-iface {
+      color muted
+      border dashed
+    }
+    style shim.download-strategy-iface {
+      color muted
+      border dashed
+    }
+    style shim.task-repo-iface {
+      color muted
+      border dashed
+    }
+  }
+
+  // ══════════════════════════════════════════════════════
+  // 4. Transport Layer — request interception flow
+  // ══════════════════════════════════════════════════════
+
+  view transport-detail {
+    title "Transport Layer — Request Interception Flow"
+    description "How fetch/WebSocket calls from UserScripts reach the background Service Worker"
+
+    include shim.transport.**
+    include shim.transport.* -> shim.protocol.*
+    include shim.transport.* -> shim.transport-iface
+    include shim.transport-iface
+    include shim.protocol.jsonrpc-parser
+    include userscript
+
+    style shim.transport.fetch-interceptor {
+      color amber
+    }
+    style shim.transport.websocket-interceptor {
+      color amber
+    }
+    style shim.transport.transport-bus {
+      color amber
+    }
+    style shim.transport.message-bridge {
+      color amber
+    }
+    style shim.transport.transport-hub {
+      color amber
+    }
+    style shim.transport-iface {
+      color muted
+      border dashed
+    }
+  }
+
+  // ══════════════════════════════════════════════════════
+  // 5. Download Engine — strategy & orchestration
+  // ══════════════════════════════════════════════════════
+
+  view engine-detail {
+    title "Download Engine — Strategy & Orchestration"
+    description "How DownloadOrchestrator selects strategies and interacts with browser APIs"
+
+    include shim.engine.**
+    include shim.persistence.inmemory-repo
+    include shim.engine.* -> browser-apis.*
+    include shim.engine.* -> shim.persistence.*
+    include shim.download-strategy-iface
+    include shim.task-repo-iface
+    include browser-apis.tabs
+    include browser-apis.downloads
+    include browser-apis.dnr
+
+    style shim.engine.orchestrator {
+      color blue
+    }
+    style shim.engine.strategy-selector {
+      color sky
+    }
+    style shim.engine.tab-strategy {
+      color green
+    }
+    style shim.engine.direct-strategy {
+      color green
+    }
+    style shim.persistence.inmemory-repo {
+      color gray
+    }
+    style shim.download-strategy-iface {
+      color muted
+      border dashed
+    }
+    style shim.task-repo-iface {
+      color muted
+      border dashed
+    }
+  }
+
+  // ══════════════════════════════════════════════════════
+  // 6. Handler Registry — method routing
+  // ══════════════════════════════════════════════════════
+
+  view handler-registry {
+    title "Method Handlers — Routing & Delegation"
+    description "MethodRouter dispatches to individual handlers; handlers delegate to engine or query persistence"
+
+    include shim.protocol.method-router
+    include shim.handlers.**
+    include shim.engine.orchestrator
+    include shim.persistence.inmemory-repo
+    include shim.handler-iface
+
+    style shim.protocol.method-router {
+      color indigo
+    }
+    style shim.handlers.** {
+      color green
+    }
+    style shim.engine.orchestrator {
+      color blue
+    }
+    style shim.persistence.inmemory-repo {
+      color gray
+    }
+    style shim.handler-iface {
+      color muted
+      border dashed
+    }
+  }
+
+  // ══════════════════════════════════════════════════════
+  // 7. Dynamic View — aria2.addUri download flow
+  // ══════════════════════════════════════════════════════
+
+  dynamic view add-uri-flow {
+    title "Dynamic View — aria2.addUri End-to-End Flow"
+    description "UserScript calls addUri → transport → protocol → handler → orchestration → browser APIs"
+
+    userscript -> shim.transport.fetch-interceptor "POST localhost:6800/jsonrpc"
+    shim.transport.fetch-interceptor -> shim.transport.transport-bus "CustomEvent with JSON-RPC body"
+    shim.transport.transport-bus -> shim.transport.message-bridge "CustomEvent crosses worlds"
+    shim.transport.message-bridge -> shim.transport.transport-hub "runtime.sendMessage"
+
+    shim.transport.transport-hub -> shim.protocol.jsonrpc-parser "raw JSON-RPC string"
+    shim.protocol.jsonrpc-parser -> shim.protocol.method-router "parsed { method, params, id }"
+    shim.protocol.method-router -> shim.handlers.add-uri "dispatch addUri"
+
+    shim.handlers.add-uri -> shim.engine.orchestrator "create(DownloadRequest)"
+
+    parallel {
+      shim.engine.orchestrator -> shim.engine.strategy-selector "select strategy"
+      shim.engine.orchestrator -> shim.persistence.inmemory-repo "persist pending task"
+    }
+
+    shim.engine.strategy-selector -> shim.engine.tab-strategy "TabDownloadStrategy selected"
+
+    shim.engine.tab-strategy -> browser-apis.dnr "updateSessionRules"
+    shim.engine.tab-strategy -> browser-apis.tabs "tabs.create({ active: false })"
+
+    shim.engine.orchestrator -> browser-apis.downloads "onCreated → match task"
+    browser-apis.downloads <- shim.engine.orchestrator "onChanged → progress"
+    shim.engine.orchestrator -> shim.persistence.inmemory-repo "update status → in_progress"
+
+    shim.handlers.add-uri <- shim.engine.orchestrator "DownloadTask { gid }"
+    shim.protocol.method-router <- shim.handlers.add-uri "result { gid }"
+    shim.protocol.jsonrpc-formatter <- shim.protocol.method-router "aria2 status object"
+    shim.transport.transport-hub <- shim.protocol.jsonrpc-formatter "JSON-RPC response"
+
+    // Response back to userscript
+    shim.transport.message-bridge <- shim.transport.transport-hub "runtime.sendMessage response"
+    shim.transport.transport-bus <- shim.transport.message-bridge "CustomEvent response"
+    shim.transport.fetch-interceptor <- shim.transport.transport-bus "CustomEvent response"
+    userscript <- shim.transport.fetch-interceptor "synthetic Response { id, result }"
+  }
+
+}
