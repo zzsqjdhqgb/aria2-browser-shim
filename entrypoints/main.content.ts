@@ -1,171 +1,242 @@
-// entrypoints/content.ts
-const LOG_PREFIX = "[ContentMain]";
-
 export default defineContentScript({
-    matches: ["<all_urls>"],
-    runAt: "document_start",
-    world: "MAIN",
-    main() {
-        console.log(`${LOG_PREFIX} Initializing interceptors on ${window.location.href}`);
+  matches: ['<all_urls>'],
+  runAt: 'document_start',
+  world: 'MAIN',
+  main() {
+    const TARGETS = ['localhost:6800', '127.0.0.1:6800'];
+    const REQUEST_TIMEOUT_MS = 30_000;
 
-        // ============ 拦截 fetch ============
-        const originalFetch = window.fetch;
-        window.fetch = async function (input, init) {
-            const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    function isAria2Target(url: string): boolean {
+      try {
+        const u = new URL(url, location.origin);
+        return TARGETS.some((t) => {
+          const [host, port] = t.split(':');
+          return u.hostname === host && u.port === port;
+        });
+      } catch {
+        return false;
+      }
+    }
 
-            if (url.includes("localhost:6800") || url.includes("127.0.0.1:6800")) {
-                console.log(`${LOG_PREFIX} Intercepted fetch to ${url}`);
-                return handleAria2Request(init?.body as string);
-            }
+    const relay = document.createElement('span');
+    relay.id = '__aria2shim_relay__';
+    relay.style.display = 'none';
+    document.documentElement?.appendChild(relay);
 
-            return originalFetch.call(this, input, init);
-        };
+    let requestCounter = 0;
+    const pendingRequests = new Map<number, {
+      resolve: (value: string) => void;
+      reject: (reason: Error) => void;
+    }>();
 
-        // ============ 拦截 WebSocket ============
-        const OriginalWebSocket = window.WebSocket;
+    relay.addEventListener('__aria2shim_response__', ((e: CustomEvent) => {
+      const { requestId, result, error, data } = e.detail;
+      const pending = pendingRequests.get(requestId);
+      if (!pending) return;
 
-        class FakeWebSocket extends EventTarget {
-            static readonly CONNECTING = 0;
-            static readonly OPEN = 1;
-            static readonly CLOSING = 2;
-            static readonly CLOSED = 3;
+      pendingRequests.delete(requestId);
 
-            readonly CONNECTING = 0;
-            readonly OPEN = 1;
-            readonly CLOSING = 2;
-            readonly CLOSED = 3;
+      if (error) {
+        pending.reject(new Error(error.message || 'RPC error'));
+        return;
+      }
 
-            readyState: number = FakeWebSocket.CONNECTING;
-            url: string;
-            protocol: string = "";
-            extensions: string = "";
-            bufferedAmount: number = 0;
-            binaryType: BinaryType = "blob";
+      pending.resolve(data !== undefined ? data : JSON.stringify(result));
+    }) as EventListener);
 
-            onopen: ((ev: Event) => void) | null = null;
-            onclose: ((ev: CloseEvent) => void) | null = null;
-            onmessage: ((ev: MessageEvent) => void) | null = null;
-            onerror: ((ev: Event) => void) | null = null;
+    relay.addEventListener('__aria2shim_wsevent__', ((e: CustomEvent) => {
+      const { wsId, method, params } = e.detail;
+      const ws = wsInstances.get(wsId);
+      if (!ws) return;
 
-            constructor(url: string | URL, protocols?: string | string[]) {
-                super();
-                this.url = url.toString();
-                console.log(`${LOG_PREFIX} Intercepted WebSocket connection to ${this.url}`);
+      if (method === 'close') {
+        ws.readyState = 3;
+        if (ws.onclose) ws.onclose(new CloseEvent('close', { code: 1000 }));
+        wsInstances.delete(wsId);
+        return;
+      }
 
-                // 模拟异步连接成功
-                setTimeout(() => {
-                    this.readyState = FakeWebSocket.OPEN;
-                    const openEvent = new Event("open");
-                    this.onopen?.(openEvent);
-                    this.dispatchEvent(openEvent);
-                    console.log(`${LOG_PREFIX} Fake WebSocket opened`);
-                }, 0);
-            }
+      if (method === 'error') {
+        if (ws.onerror) ws.onerror(new Event('error'));
+        return;
+      }
 
-            send(data: string | ArrayBuffer | Blob | ArrayBufferView): void {
-                if (this.readyState !== FakeWebSocket.OPEN) {
-                    throw new DOMException("WebSocket is not open", "InvalidStateError");
-                }
+      if (ws.onmessage) {
+        const eventData = params ? JSON.stringify(params[0]) : '';
+        ws.onmessage(new MessageEvent('message', { data: eventData }));
+      }
+    }) as EventListener);
 
-                console.log(`${LOG_PREFIX} WebSocket send:`, data);
+    function sendRequest(type: string, payload: unknown): Promise<string> {
+      return new Promise((resolve, reject) => {
+        const requestId = ++requestCounter;
 
-                // 处理消息并返回响应
-                this.handleMessage(data as string);
-            }
+        const timer = setTimeout(() => {
+          pendingRequests.delete(requestId);
+          reject(new Error('Request timeout'));
+        }, REQUEST_TIMEOUT_MS);
 
-            private async handleMessage(data: string): Promise<void> {
-                try {
-                    const response = await sendToBackground(JSON.parse(data));
-                    const messageEvent = new MessageEvent("message", {
-                        data: JSON.stringify(response),
-                    });
+        pendingRequests.set(requestId, {
+          resolve: (value) => {
+            clearTimeout(timer);
+            resolve(value);
+          },
+          reject: (err) => {
+            clearTimeout(timer);
+            reject(err);
+          },
+        });
 
-                    console.log(`${LOG_PREFIX} WebSocket response:`, response);
-                    this.onmessage?.(messageEvent);
-                    this.dispatchEvent(messageEvent);
-                } catch (err) {
-                    console.error(`${LOG_PREFIX} WebSocket handle error:`, err);
-                }
-            }
+        relay.dispatchEvent(new CustomEvent('__aria2shim_request__', {
+          detail: { requestId, type, payload },
+        }));
+      });
+    }
 
-            close(code?: number, reason?: string): void {
-                console.log(`${LOG_PREFIX} WebSocket close requested`);
-                this.readyState = FakeWebSocket.CLOSING;
+    // Intercept fetch
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = function (input: RequestInfo | URL, init?: RequestInit) {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (isAria2Target(url)) {
+        const body = init?.body;
+        let parsed: unknown;
+        try {
+          parsed = typeof body === 'string' ? JSON.parse(body) : body;
+        } catch {
+          parsed = body;
+        }
+        return sendRequest('rpc', parsed).then((result) => {
+          return new Response(result as BodyInit, {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }) as Promise<Response>;
+      }
+      return originalFetch(input, init);
+    };
 
-                setTimeout(() => {
-                    this.readyState = FakeWebSocket.CLOSED;
-                    const closeEvent = new CloseEvent("close", {
-                        code: code ?? 1000,
-                        reason: reason ?? "",
-                        wasClean: true,
-                    });
-                    this.onclose?.(closeEvent);
-                    this.dispatchEvent(closeEvent);
-                }, 0);
-            }
+    // Intercept XMLHttpRequest
+    const OrigXHR = window.XMLHttpRequest;
+    const origOpen = OrigXHR.prototype.open;
+    const origSetRequestHeader = OrigXHR.prototype.setRequestHeader;
+    const origSend = OrigXHR.prototype.send;
+
+    OrigXHR.prototype.open = function (
+      method: string,
+      url: string | URL,
+      async = true,
+      username?: string | null,
+      password?: string | null,
+    ) {
+      const urlStr = url.toString();
+      (this as any).__aria2shim_target__ = isAria2Target(urlStr);
+      (this as any).__aria2shim_method__ = method;
+      (this as any).__aria2shim_url__ = urlStr;
+      if (!(this as any).__aria2shim_target__) {
+        return origOpen.call(this, method, url, async, username, password) as any;
+      }
+    };
+
+    OrigXHR.prototype.setRequestHeader = function (name: string, value: string) {
+      if ((this as any).__aria2shim_target__) return;
+      origSetRequestHeader.call(this, name, value);
+    };
+
+    OrigXHR.prototype.send = function (body?: Document | XMLHttpRequestBodyInit | null) {
+      if (!(this as any).__aria2shim_target__) {
+        return origSend.call(this, body);
+      }
+
+      const xhr = this;
+      let parsed: unknown;
+      try {
+        parsed = typeof body === 'string' ? JSON.parse(body) : body;
+      } catch {
+        parsed = body;
+      }
+
+      sendRequest('rpc', parsed)
+        .then((result) => {
+          Object.defineProperty(xhr, 'readyState', { value: 4, writable: true });
+          Object.defineProperty(xhr, 'status', { value: 200, writable: true });
+          Object.defineProperty(xhr, 'responseText', { value: result, writable: true });
+          let responseValue: unknown = result;
+          try { responseValue = JSON.parse(result); } catch {}
+          Object.defineProperty(xhr, 'response', { value: responseValue, writable: true });
+          if (xhr.onload) xhr.onload(new ProgressEvent('load'));
+          if (xhr.onreadystatechange) xhr.onreadystatechange(new Event('readystatechange'));
+        })
+        .catch((_err) => {
+          if (xhr.onerror) xhr.onerror(new ProgressEvent('error'));
+        });
+    };
+
+    // Intercept WebSocket
+    const wsInstances = new Map<number, FakeWebSocket>();
+    let wsIdCounter = 0;
+
+    class FakeWebSocket extends EventTarget {
+      readonly url: string;
+      readyState: number = 0;
+      readonly CONNECTING = 0;
+      readonly OPEN = 1;
+      readonly CLOSING = 2;
+      readonly CLOSED = 3;
+      onopen: ((ev: Event) => void) | null = null;
+      onclose: ((ev: CloseEvent) => void) | null = null;
+      onerror: ((ev: Event) => void) | null = null;
+      onmessage: ((ev: MessageEvent) => void) | null = null;
+      private wsId: number;
+
+      constructor(url: string) {
+        super();
+        this.url = url;
+        this.wsId = ++wsIdCounter;
+        wsInstances.set(this.wsId, this);
+
+        relay.dispatchEvent(new CustomEvent('__aria2shim_wsconnect__', {
+          detail: { wsId: this.wsId, url },
+        }));
+
+        setTimeout(() => {
+          this.readyState = 1;
+          if (this.onopen) this.onopen(new Event('open'));
+        }, 0);
+      }
+
+      send(data: string | ArrayBufferLike | Blob | ArrayBufferView): void {
+        if (this.readyState !== 1) throw new Error('WebSocket is not open');
+
+        let body: unknown;
+        try {
+          body = typeof data === 'string' ? JSON.parse(data) : data;
+        } catch {
+          body = data;
         }
 
-        // 替换全局 WebSocket（仅针对 aria2 地址）
-        window.WebSocket = new Proxy(OriginalWebSocket, {
-            construct(target, args: [string | URL, (string | string[])?]) {
-                const url = args[0].toString();
+        sendRequest('ws-rpc', { wsId: this.wsId, payload: body });
+      }
 
-                if (url.includes("localhost:6800") || url.includes("127.0.0.1:6800")) {
-                    console.log(`${LOG_PREFIX} Creating fake WebSocket for aria2`);
-                    return new FakeWebSocket(url, args[1]);
-                }
+      close(code?: number, reason?: string): void {
+        if (this.readyState === 3) return;
+        this.readyState = 3;
 
-                // 其他 WebSocket 正常创建
-                return new target(...args);
-            },
-        }) as typeof WebSocket;
+        relay.dispatchEvent(new CustomEvent('__aria2shim_wsclose__', {
+          detail: { wsId: this.wsId, code, reason },
+        }));
 
-        // ============ 通用处理函数 ============
+        wsInstances.delete(this.wsId);
+      }
+    }
 
-        async function sendToBackground(body: unknown): Promise<unknown> {
-            const requestId = crypto.randomUUID();
-
-            return new Promise((resolve, reject) => {
-                const timeout = setTimeout(() => {
-                    window.removeEventListener("aria2-shim-response", handler as EventListener);
-                    reject(new Error("Request timeout"));
-                }, 30000);
-
-                const handler = (e: CustomEvent) => {
-                    if (e.detail?._requestId !== requestId) return;
-                    window.removeEventListener("aria2-shim-response", handler as EventListener);
-                    resolve(e.detail.data);
-                };
-
-                window.addEventListener("aria2-shim-response", handler as EventListener);
-                window.dispatchEvent(
-                    new CustomEvent("aria2-shim-request", {
-                        detail: { _requestId: requestId, body }
-                    })
-                );
-            });
+    (window as any).WebSocket = new Proxy(window.WebSocket, {
+      construct(target, args) {
+        const url = args[0] as string;
+        if (isAria2Target(url)) {
+          return new FakeWebSocket(url);
         }
-
-        async function handleAria2Request(bodyStr: string | null): Promise<Response> {
-            try {
-                const body = bodyStr ? JSON.parse(bodyStr) : null;
-                if (body) {
-                    const result = await sendToBackground(body);
-                    return new Response(JSON.stringify(result), {
-                        status: 200,
-                        headers: { "Content-Type": "application/json" },
-                    });
-                }
-            } catch (e) {
-                console.error(`${LOG_PREFIX} Handle request error:`, e);
-            }
-
-            return new Response(JSON.stringify({ error: "Invalid request" }), {
-                status: 400,
-                headers: { "Content-Type": "application/json" },
-            });
-        }
-
-        console.log(`${LOG_PREFIX} Fetch and WebSocket interceptors installed`);
-    },
+        return new target(url, args[1]);
+      },
+    });
+  },
 });
