@@ -1,8 +1,12 @@
+import { createLogger } from "@/lib/logging";
+
 export default defineContentScript({
   matches: ["<all_urls>"],
   runAt: "document_start",
   world: "MAIN",
   main() {
+    const log = createLogger("[MainContent]");
+
     /**
      * Checks whether a URL targets the aria2 JSON-RPC endpoint.
      * Uses proper URL parsing to avoid substring-match false positives.
@@ -199,5 +203,7 @@ export default defineContentScript({
         return new target(...args);
       },
     }) as typeof WebSocket;
+
+    log.debug("Injected — fetch and WebSocket interception active");
   },
 });

@@ -16,22 +16,20 @@ import { createLogger } from "@/lib/logging";
 
 const ALLOWED_SETTING_KEYS = ["interceptionEnabled", "perSiteOverrides", "pendingTimeoutMs"] as const;
 
-export default defineBackground(async () => {
+export default defineBackground(() => {
   const log = createLogger("[Background]");
   log.info("aria2-browser-shim background loaded");
 
   const downloadManager = new DownloadManager();
-  await downloadManager.hydrate();
-
-  const settings = await LocalStore.getSettings();
   const registry = new MethodRegistry();
   registerAll(registry);
 
-  const ctx: HandlerContext = {
-    downloadManager,
-    settings,
-    store: { session: SessionStore, local: LocalStore },
-  };
+  let readyResolve!: (ctx: HandlerContext) => void;
+  let readyReject!: (err: unknown) => void;
+  const readyPromise = new Promise<HandlerContext>((resolve, reject) => {
+    readyResolve = resolve;
+    readyReject = reject;
+  });
 
   browser.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     if (!message || typeof message !== "object") {
@@ -41,17 +39,18 @@ export default defineBackground(async () => {
     switch (message.type) {
       case MSG_ARIA2_RPC: {
         const requestId = message.payload?.id ?? null;
-        handleAria2RpcMessage(message.payload, registry, ctx)
-          .then(sendResponse)
+        readyPromise
+          .then((ctx) => handleAria2RpcMessage(message.payload, registry, ctx))
           .catch((err: unknown) => {
             const errorMessage = err instanceof Error ? err.message : String(err);
             log.error("RPC handler error:", errorMessage);
-            sendResponse({
-              jsonrpc: "2.0",
+            return {
+              jsonrpc: "2.0" as const,
               id: requestId,
               error: { code: -32603, message: errorMessage },
-            });
-          });
+            };
+          })
+          .then(sendResponse);
         return true;
       }
 
@@ -130,6 +129,25 @@ export default defineBackground(async () => {
         return false;
     }
   });
+
+  (async () => {
+    try {
+      await downloadManager.hydrate();
+      const settings = await LocalStore.getSettings();
+
+      const ctx: HandlerContext = {
+        downloadManager,
+        settings,
+        store: { session: SessionStore, local: LocalStore },
+      };
+
+      readyResolve(ctx);
+      log.info("Background ready");
+    } catch (err: unknown) {
+      log.error("Background initialization failed:", err);
+      readyReject(err);
+    }
+  })();
 
   log.info("Message listener registered");
 });

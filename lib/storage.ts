@@ -2,6 +2,7 @@ import type { DownloadTask, AppSettings } from './types';
 import { DEFAULT_SETTINGS } from './types';
 
 const ACTIVE_TASKS_KEY = 'aria2_active_tasks' as const;
+const SESSION_LOCAL_KEY = 'aria2_session_active_tasks' as const;
 const SETTINGS_KEY = 'aria2_settings' as const;
 const HISTORY_KEY = 'aria2_download_history' as const;
 const MAX_HISTORY = 500 as const;
@@ -9,15 +10,28 @@ const MAX_HISTORY = 500 as const;
 // ============================================================================
 // SessionStore — manages active download tasks in session storage
 // ============================================================================
+
+function getSessionArea() {
+  return browser.storage.session ?? browser.storage.local;
+}
+
+function getSessionKey() {
+  return browser.storage.session ? ACTIVE_TASKS_KEY : SESSION_LOCAL_KEY;
+}
+
 export namespace SessionStore {
   async function readAll(): Promise<DownloadTask[]> {
-    const result = await browser.storage.session.get({ [ACTIVE_TASKS_KEY]: [] });
-    const tasks = result[ACTIVE_TASKS_KEY];
+    const area = getSessionArea();
+    const key = getSessionKey();
+    const result = await area.get({ [key]: [] });
+    const tasks = result[key];
     return Array.isArray(tasks) ? tasks : [];
   }
 
   async function writeAll(tasks: DownloadTask[]): Promise<void> {
-    await browser.storage.session.set({ [ACTIVE_TASKS_KEY]: tasks });
+    const area = getSessionArea();
+    const key = getSessionKey();
+    await area.set({ [key]: tasks });
   }
 
   /**

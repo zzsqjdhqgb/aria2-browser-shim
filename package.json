@@ -5,15 +5,15 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "wxt",
+    "dev": "pnpx tsx scripts/inject-ariang.ts && wxt",
     "dev:firefox": "wxt -b firefox",
-    "build": "npx tsx scripts/inject-ariang.ts && wxt build",
+    "build": "pnpx tsx scripts/inject-ariang.ts && wxt build",
     "build:firefox": "wxt build -b firefox",
     "zip": "wxt zip",
     "zip:firefox": "wxt zip -b firefox",
     "compile": "tsc --noEmit",
     "postinstall": "wxt prepare",
-    "pretest:e2e": "npm run build",
+    "pretest:e2e": "pnpm run build",
     "test:e2e": "playwright test",
     "test:e2e:headed": "playwright test --headed"
   },
