@@ -1,3 +1,12 @@
+# Aria2 Browser Shim — 功能规格说明
+
+一个浏览器扩展，在扩展环境中模拟完整的 Aria2 JSON-RPC 服务：
+
+1. **模拟完整 Aria2 RPC** — 尽可能将 RPC 方法映射到浏览器扩展原生能力（downloads、tabs、DNR 等），对外保持 Aria2 协议兼容。
+2. **请求拦截与重定向** — 通过注入脚本拦截页面中指向 `localhost:6800/jsonrpc` 的 Aria2 请求，透明重定向到扩展后台处理，使依赖 Aria2 的网页无需安装 Aria2 即可工作。
+
+---
+
 # 核心功能点与代码实现要求
 
 ---
