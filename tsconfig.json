@@ -4,5 +4,4 @@
     "allowImportingTsExtensions": true,
     "jsx": "react-jsx"
   },
-  "exclude": ["tests", "vitest.config.ts"]
 }

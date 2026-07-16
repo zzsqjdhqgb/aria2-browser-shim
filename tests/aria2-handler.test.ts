@@ -82,14 +82,14 @@ describe("Aria2Handler", () => {
     // =====================================================================
 
     it("returns valid jsonrpc 2.0 response", async () => {
-        const res = await handleAria2Request(rpc("aria2.getVersion"));
+        const res = (await handleAria2Request(rpc("aria2.getVersion"))) as Aria2RpcResponse;
         expect(res.jsonrpc).toBe("2.0");
         expect(res.id).toBe("1");
         expect(res.result).toBeDefined();
     });
 
     it("returns error for unknown method", async () => {
-        const res = await handleAria2Request(rpc("aria2.nonExistent"));
+        const res = (await handleAria2Request(rpc("aria2.nonExistent"))) as Aria2RpcResponse;
         expect(res.error?.code).toBe(-32601);
     });
 
@@ -110,10 +110,10 @@ describe("Aria2Handler", () => {
     // =====================================================================
 
     it("addUri creates a download task and returns GID", async () => {
-        const res = await handleAria2Request(rpc("aria2.addUri", [
+        const res = (await handleAria2Request(rpc("aria2.addUri", [
             ["http://example.com/file.zip"],
             { out: "file.zip", dir: "/dl", header: ["Cookie: session=abc"] },
-        ]));
+        ]))) as Aria2RpcResponse;
         expect(res.result).toBe("mock-gid-001");
         expect(mockDm.create).toHaveBeenCalledWith(expect.objectContaining({
             url: "http://example.com/file.zip",
@@ -124,9 +124,9 @@ describe("Aria2Handler", () => {
     });
 
     it("addUri with multiple URIs passes fallback URLs", async () => {
-        await handleAria2Request(rpc("aria2.addUri", [
+        (await handleAria2Request(rpc("aria2.addUri", [
             ["http://primary/file.zip", "http://mirror/file.zip"],
-        ]));
+        ]))) as Aria2RpcResponse;
         expect(mockDm.create).toHaveBeenCalledWith(expect.objectContaining({
             url: "http://primary/file.zip",
             urls: ["http://mirror/file.zip"],
@@ -134,20 +134,20 @@ describe("Aria2Handler", () => {
     });
 
     it("addUri returns error when URIs array is empty", async () => {
-        const res = await handleAria2Request(rpc("aria2.addUri", [[]]));
+        const res = (await handleAria2Request(rpc("aria2.addUri", [[]]))) as Aria2RpcResponse;
         expect(res.error?.code).toBe(-32602);
     });
 
     it("addUri returns error when URIs param is missing", async () => {
-        const res = await handleAria2Request(rpc("aria2.addUri", []));
+        const res = (await handleAria2Request(rpc("aria2.addUri", []))) as Aria2RpcResponse;
         expect(res.error?.code).toBe(-32602);
     });
 
     it("addUri strips secret token prefix", async () => {
-        await handleAria2Request(rpc("aria2.addUri", [
+        (await handleAria2Request(rpc("aria2.addUri", [
             "token:mysecret",
             ["http://example.com/file.zip"],
-        ]));
+        ]))) as Aria2RpcResponse;
         expect(mockDm.create).toHaveBeenCalledWith(expect.objectContaining({
             url: "http://example.com/file.zip",
         }));
@@ -158,12 +158,12 @@ describe("Aria2Handler", () => {
     // =====================================================================
 
     it("addTorrent returns unsupported error", async () => {
-        const res = await handleAria2Request(rpc("aria2.addTorrent", ["base64..."]));
+        const res = (await handleAria2Request(rpc("aria2.addTorrent", ["base64..."]))) as Aria2RpcResponse;
         expect(res.error?.message).toContain("not supported");
     });
 
     it("addMetalink returns unsupported error", async () => {
-        const res = await handleAria2Request(rpc("aria2.addMetalink", ["base64..."]));
+        const res = (await handleAria2Request(rpc("aria2.addMetalink", ["base64..."]))) as Aria2RpcResponse;
         expect(res.error?.message).toContain("not supported");
     });
 
@@ -172,25 +172,25 @@ describe("Aria2Handler", () => {
     // =====================================================================
 
     it("pause calls downloadManager.pause", async () => {
-        const res = await handleAria2Request(rpc("aria2.pause", ["gid-1"]));
+        const res = (await handleAria2Request(rpc("aria2.pause", ["gid-1"]))) as Aria2RpcResponse;
         expect(res.result).toBe("gid-1");
         expect(mockDm.pause).toHaveBeenCalledWith("gid-1");
     });
 
     it("unpause calls downloadManager.resume", async () => {
-        const res = await handleAria2Request(rpc("aria2.unpause", ["gid-1"]));
+        const res = (await handleAria2Request(rpc("aria2.unpause", ["gid-1"]))) as Aria2RpcResponse;
         expect(res.result).toBe("gid-1");
         expect(mockDm.resume).toHaveBeenCalledWith("gid-1");
     });
 
     it("remove calls downloadManager.cancel", async () => {
-        const res = await handleAria2Request(rpc("aria2.remove", ["gid-1"]));
+        const res = (await handleAria2Request(rpc("aria2.remove", ["gid-1"]))) as Aria2RpcResponse;
         expect(res.result).toBe("gid-1");
         expect(mockDm.cancel).toHaveBeenCalledWith("gid-1");
     });
 
     it("forceRemove calls downloadManager.cancel", async () => {
-        await handleAria2Request(rpc("aria2.forceRemove", ["gid-1"]));
+        (await handleAria2Request(rpc("aria2.forceRemove", ["gid-1"]))) as Aria2RpcResponse;
         expect(mockDm.cancel).toHaveBeenCalledWith("gid-1");
     });
 
@@ -199,7 +199,7 @@ describe("Aria2Handler", () => {
             makeTask({ id: "a", status: "in_progress" }),
             makeTask({ id: "b", status: "in_progress" }),
         ]);
-        const res = await handleAria2Request(rpc("aria2.pauseAll"));
+        const res = (await handleAria2Request(rpc("aria2.pauseAll"))) as Aria2RpcResponse;
         expect(res.result).toBe("OK");
         expect(mockDm.pause).toHaveBeenCalledTimes(2);
     });
@@ -208,19 +208,19 @@ describe("Aria2Handler", () => {
         mockDm.queryTasks.mockReturnValue([
             makeTask({ id: "a", status: "paused" }),
         ]);
-        await handleAria2Request(rpc("aria2.unpauseAll"));
+        (await handleAria2Request(rpc("aria2.unpauseAll"))) as Aria2RpcResponse;
         expect(mockDm.resume).toHaveBeenCalledTimes(1);
     });
 
     it("removeDownloadResult removes a completed task", async () => {
-        const res = await handleAria2Request(rpc("aria2.removeDownloadResult", ["gid-done"]));
+        const res = (await handleAria2Request(rpc("aria2.removeDownloadResult", ["gid-done"]))) as Aria2RpcResponse;
         expect(res.result).toBe("OK");
         expect(mockDm.removeTask).toHaveBeenCalledWith("gid-done");
     });
 
     it("purgeDownloadResult purges completed tasks", async () => {
         mockDm.purgeCompleted.mockReturnValue(5);
-        const res = await handleAria2Request(rpc("aria2.purgeDownloadResult"));
+        const res = (await handleAria2Request(rpc("aria2.purgeDownloadResult"))) as Aria2RpcResponse;
         expect(res.result).toBe("5");
         expect(mockDm.purgeCompleted).toHaveBeenCalled();
     });
@@ -234,8 +234,8 @@ describe("Aria2Handler", () => {
             id: "abcdef01", status: "in_progress",
             bytesReceived: 512, totalBytes: 1024, speed: 256,
         }));
-        const res = await handleAria2Request(rpc("aria2.tellStatus", ["abcdef01"]));
-        const info = res.result as Record<string, unknown>;
+        const res = (await handleAria2Request(rpc("aria2.tellStatus", ["abcdef01"]))) as Aria2RpcResponse;
+        const info = res.result as unknown as Record<string, unknown>;
         expect(info.gid).toBe("abcdef01");
         expect(info.status).toBe("active");
         expect(info.completedLength).toBe("512");
@@ -245,7 +245,7 @@ describe("Aria2Handler", () => {
 
     it("tellStatus returns error for unknown GID", async () => {
         mockDm.getTask.mockReturnValue(undefined);
-        const res = await handleAria2Request(rpc("aria2.tellStatus", ["nonexistent"]));
+        const res = (await handleAria2Request(rpc("aria2.tellStatus", ["nonexistent"]))) as Aria2RpcResponse;
         expect(res.error?.code).toBe(1);
     });
 
@@ -254,8 +254,8 @@ describe("Aria2Handler", () => {
             makeTask({ id: "a", status: "in_progress", bytesReceived: 100, totalBytes: 200 }),
             makeTask({ id: "b", status: "in_progress", bytesReceived: 300, totalBytes: 400 }),
         ]);
-        const res = await handleAria2Request(rpc("aria2.tellActive"));
-        const tasks = res.result as Record<string, unknown>[];
+        const res = (await handleAria2Request(rpc("aria2.tellActive"))) as Aria2RpcResponse;
+        const tasks = res.result as unknown as Record<string, unknown>[];
         expect(tasks).toHaveLength(2);
         expect(tasks[0].gid).toBe("a");
         expect(tasks[1].gid).toBe("b");
@@ -263,15 +263,15 @@ describe("Aria2Handler", () => {
 
     it("tellWaiting returns waiting/paused tasks", async () => {
         mockDm.queryTasks.mockReturnValue([makeTask({ id: "w", status: "pending" })]);
-        const res = await handleAria2Request(rpc("aria2.tellWaiting", [0, 100]));
-        const tasks = res.result as Record<string, unknown>[];
+        const res = (await handleAria2Request(rpc("aria2.tellWaiting", [0, 100]))) as Aria2RpcResponse;
+        const tasks = res.result as unknown as Record<string, unknown>[];
         expect(tasks[0].status).toBe("waiting");
     });
 
     it("tellStopped returns completed/error/cancelled tasks", async () => {
         mockDm.queryTasks.mockReturnValue([makeTask({ id: "s", status: "complete" })]);
-        const res = await handleAria2Request(rpc("aria2.tellStopped", [0, 100]));
-        const tasks = res.result as Record<string, unknown>[];
+        const res = (await handleAria2Request(rpc("aria2.tellStopped", [0, 100]))) as Aria2RpcResponse;
+        const tasks = res.result as unknown as Record<string, unknown>[];
         expect(tasks[0].status).toBe("complete");
     });
 
@@ -286,7 +286,7 @@ describe("Aria2Handler", () => {
             makeTask({ id: "3", status: "pending" }),
             makeTask({ id: "4", status: "complete" }),
         ]);
-        const res = await handleAria2Request(rpc("aria2.getGlobalStat"));
+        const res = (await handleAria2Request(rpc("aria2.getGlobalStat"))) as Aria2RpcResponse;
         const stat = res.result as Record<string, string>;
         expect(stat.numActive).toBe("2");
         expect(stat.numWaiting).toBe("1");
@@ -295,7 +295,7 @@ describe("Aria2Handler", () => {
     });
 
     it("getVersion returns accurate feature list (no BT/FTP)", async () => {
-        const res = await handleAria2Request(rpc("aria2.getVersion"));
+        const res = (await handleAria2Request(rpc("aria2.getVersion"))) as Aria2RpcResponse;
         const ver = res.result as { version: string; enabledFeatures: string[] };
         expect(ver.version).toContain("shim");
         expect(ver.enabledFeatures).not.toContain("BitTorrent");
@@ -305,31 +305,31 @@ describe("Aria2Handler", () => {
     });
 
     it("getSessionInfo returns a session ID", async () => {
-        const res = await handleAria2Request(rpc("aria2.getSessionInfo"));
+        const res = (await handleAria2Request(rpc("aria2.getSessionInfo"))) as Aria2RpcResponse;
         const info = res.result as { sessionId: string };
         expect(info.sessionId).toBeTruthy();
         expect(typeof info.sessionId).toBe("string");
 
         // Calling again returns same ID (cached)
-        const res2 = await handleAria2Request(rpc("aria2.getSessionInfo"));
+        const res2 = (await handleAria2Request(rpc("aria2.getSessionInfo"))) as Aria2RpcResponse;
         const info2 = res2.result as { sessionId: string };
         expect(info2.sessionId).toBe(info.sessionId);
     });
 
     it("shutdown disables extension and cancels all downloads", async () => {
-        const res = await handleAria2Request(rpc("aria2.shutdown"));
+        const res = (await handleAria2Request(rpc("aria2.shutdown"))) as Aria2RpcResponse;
         expect(res.result).toBe("OK");
         expect(mockDm.cancelAll).toHaveBeenCalled();
 
         // After shutdown, setEnabled(false) was called — verify storage
         const stored = await browser.storage.local.get("settings");
-        expect(stored.settings.enabled).toBe(false);
+        expect((stored as any).settings.enabled).toBe(false);
     });
 
     it("changeGlobalOption updates stored settings", async () => {
-        await handleAria2Request(rpc("aria2.changeGlobalOption", [{ dir: "/downloads" }]));
+        (await handleAria2Request(rpc("aria2.changeGlobalOption", [{ dir: "/downloads" }]))) as Aria2RpcResponse;
         const stored = await browser.storage.local.get("settings");
-        expect(stored.settings.defaultDir).toBe("/downloads");
+        expect((stored as any).settings.defaultDir).toBe("/downloads");
     });
 
     // =====================================================================
@@ -337,10 +337,10 @@ describe("Aria2Handler", () => {
     // =====================================================================
 
     it("system.multicall processes multiple calls", async () => {
-        const res = await handleAria2Request(rpc("system.multicall", [[
+        const res = (await handleAria2Request(rpc("system.multicall", [[
             { methodName: "aria2.getVersion", params: [] },
             { methodName: "aria2.tellActive", params: [] },
-        ]]));
+        ]]))) as Aria2RpcResponse;
         const results = res.result as unknown[][];
         expect(results).toHaveLength(2);
         // First result: [versionObj]
@@ -351,7 +351,7 @@ describe("Aria2Handler", () => {
     });
 
     it("system.listMethods returns all supported methods", async () => {
-        const res = await handleAria2Request(rpc("system.listMethods"));
+        const res = (await handleAria2Request(rpc("system.listMethods"))) as Aria2RpcResponse;
         const methods = res.result as string[];
         expect(methods).toContain("aria2.addUri");
         expect(methods).toContain("aria2.tellStatus");
@@ -360,14 +360,14 @@ describe("Aria2Handler", () => {
     });
 
     it("system.multicall handles errors in individual calls", async () => {
-        const res = await handleAria2Request(rpc("system.multicall", [[
+        const res = (await handleAria2Request(rpc("system.multicall", [[
             { methodName: "aria2.getVersion", params: [] },
             { methodName: "aria2.nonExistent", params: [] },
-        ]]));
+        ]]))) as Aria2RpcResponse;
         const results = res.result as unknown[][];
         expect(results).toHaveLength(2);
         // Second call should be an error object, not an array
-        expect((results[1] as Record<string, unknown>).code).toBe(-32601);
+        expect((results[1] as unknown as Record<string, unknown>).code).toBe(-32601);
     });
 
     // =====================================================================
@@ -376,7 +376,7 @@ describe("Aria2Handler", () => {
 
     it("returns error when extension is disabled", async () => {
         await browser.storage.local.set({ settings: { ...DEFAULT_SETTINGS, enabled: false } });
-        const res = await handleAria2Request(rpc("aria2.getVersion"));
+        const res = (await handleAria2Request(rpc("aria2.getVersion"))) as Aria2RpcResponse;
         expect(res.error?.code).toBe(-32000);
         expect(res.error?.message).toContain("disabled");
     });
@@ -387,20 +387,20 @@ describe("Aria2Handler", () => {
 
     it("rejects request when rpcSecret is set and no token provided", async () => {
         await browser.storage.local.set({ settings: { ...DEFAULT_SETTINGS, rpcSecret: "s3cret" } });
-        const res = await handleAria2Request(rpc("aria2.getVersion"));
+        const res = (await handleAria2Request(rpc("aria2.getVersion"))) as Aria2RpcResponse;
         expect(res.error?.code).toBe(-32001);
     });
 
     it("accepts request with correct token prefix", async () => {
         await browser.storage.local.set({ settings: { ...DEFAULT_SETTINGS, rpcSecret: "s3cret" } });
-        const res = await handleAria2Request(rpc("aria2.getVersion", ["token:s3cret"]));
+        const res = (await handleAria2Request(rpc("aria2.getVersion", ["token:s3cret"]))) as Aria2RpcResponse;
         expect(res.result).toBeDefined();
     });
 
     it("rejects request with wrong token", async () => {
         await browser.storage.local.set({ settings: { ...DEFAULT_SETTINGS, rpcSecret: "s3cret" } });
         // Token prefix "token:wrong" is stripped, but the remaining token doesn't match
-        const res = await handleAria2Request(rpc("aria2.addUri", ["token:wrong", ["http://x.com/z"]]));
+        const res = (await handleAria2Request(rpc("aria2.addUri", ["token:wrong", ["http://x.com/z"]]))) as Aria2RpcResponse;
         // In this impl, wrong token passes the first check (hadToken) but the value check comes from params[0] after strip
         // Let me check... actually stripToken removes the first param, and the check is:
         // if (hadToken && settings.rpcSecret && rawParams[0] !== `token:${settings.rpcSecret}`) return error
@@ -413,23 +413,23 @@ describe("Aria2Handler", () => {
     // =====================================================================
 
     it("handles request with empty params", async () => {
-        const res = await handleAria2Request(rpc("aria2.getVersion", undefined));
+        const res = (await handleAria2Request(rpc("aria2.getVersion", undefined))) as Aria2RpcResponse;
         expect(res.result).toBeDefined();
     });
 
-    it("handles request with null id", async () => {
-        const res = await handleAria2Request(rpc("aria2.getVersion", [], null));
+    it("handles request with numeric id 0", async () => {
+        const res = (await handleAria2Request(rpc("aria2.getVersion", [], 0 as unknown as string))) as Aria2RpcResponse;
         expect(res.jsonrpc).toBe("2.0");
-        expect(res.id).toBeNull();
+        expect(res.id).toBe(0);
     });
 
     it("getPeers returns empty array (no BT)", async () => {
-        const res = await handleAria2Request(rpc("aria2.getPeers", ["gid-1"]));
+        const res = (await handleAria2Request(rpc("aria2.getPeers", ["gid-1"]))) as Aria2RpcResponse;
         expect(res.result).toEqual([]);
     });
 
     it("getServers returns empty array (no BT)", async () => {
-        const res = await handleAria2Request(rpc("aria2.getServers", ["gid-1"]));
+        const res = (await handleAria2Request(rpc("aria2.getServers", ["gid-1"]))) as Aria2RpcResponse;
         expect(res.result).toEqual([]);
     });
 });

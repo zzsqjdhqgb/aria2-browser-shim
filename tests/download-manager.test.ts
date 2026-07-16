@@ -22,8 +22,17 @@ describe("DownloadManager", () => {
     let dm: typeof import("@/core/download-manager").downloadManager;
 
     beforeEach(async () => {
-        mockLoadTasksSnapshot.mockResolvedValue([]);
+        const internal = (browser as any)._internal;
         vi.resetModules();
+        // vi.resetModules() clears mock implementations including addListener.
+        // Re-wire them so the DownloadManager constructor can register its handlers.
+        (browser.downloads.onCreated.addListener as ReturnType<typeof vi.fn>).mockImplementation(
+            (fn: (...args: unknown[]) => void) => internal.downloadsCreatedListeners.push(fn),
+        );
+        (browser.downloads.onChanged.addListener as ReturnType<typeof vi.fn>).mockImplementation(
+            (fn: (...args: unknown[]) => void) => internal.downloadsChangedListeners.push(fn),
+        );
+        mockLoadTasksSnapshot.mockResolvedValue([]);
         const mod = await import("@/core/download-manager");
         dm = mod.downloadManager;
         await dm.init();
