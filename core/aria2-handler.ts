@@ -1,5 +1,6 @@
 import { downloadManager } from "./download-manager";
 import { isEnabled, setEnabled, loadSettings, saveSettings } from "./storage";
+import { loadSessionId, saveSessionId } from "./storage";
 import type {
     Aria2RpcRequest, Aria2RpcResponse, Aria2TaskInfo, Aria2GlobalStat,
     Aria2FileInfo, Aria2UriInfo, Aria2VersionResult, Aria2SessionInfo,
@@ -10,13 +11,25 @@ import { toAria2Status, type DownloadTask, type InternalStatus, type DownloadReq
 const LOG_PREFIX = "[Aria2Handler]";
 
 // =============================================================================
-// Session ID
+// Session ID — persisted across SW restarts
 // =============================================================================
 
-const sessionId = Array.from(
-    crypto.getRandomValues(new Uint8Array(8)),
-    (b) => b.toString(16).padStart(2, "0"),
-).join("");
+let _sessionId: string | null = null;
+
+async function getSessionId(): Promise<string> {
+    if (_sessionId) return _sessionId;
+    const stored = await loadSessionId();
+    if (stored) {
+        _sessionId = stored;
+    } else {
+        _sessionId = Array.from(
+            crypto.getRandomValues(new Uint8Array(8)),
+            (b) => b.toString(16).padStart(2, "0"),
+        ).join("");
+        await saveSessionId(_sessionId);
+    }
+    return _sessionId;
+}
 
 // =============================================================================
 // Helpers
@@ -274,7 +287,7 @@ async function callMethod(
             return result;
         }
         case "aria2.getSessionInfo": {
-            const result: Aria2SessionInfo = { sessionId: sessionId };
+            const result: Aria2SessionInfo = { sessionId: await getSessionId() };
             return result;
         }
         case "aria2.shutdown":

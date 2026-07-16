@@ -150,6 +150,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 export interface StoredTask {
     id: string;
     url: string;
+    browserDownloadId?: number;
     filename: string;
     directory: string;
     status: InternalStatus;

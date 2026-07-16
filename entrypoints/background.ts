@@ -6,6 +6,7 @@ const LOG_PREFIX = "[Background]";
 
 export default defineBackground(() => {
     console.log(`${LOG_PREFIX} Aria2 Browser Shim service worker started`);
+    downloadManager.init();
 
     // Listen for RPC messages from content bridge
     browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
