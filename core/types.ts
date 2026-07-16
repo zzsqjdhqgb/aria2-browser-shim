@@ -1,78 +1,161 @@
-/**
- * Download request provided by the caller — pure HTTP download semantics
- * Unrelated to any RPC protocol
- */
-export interface DownloadRequest {
-    /** Download URL (HTTP/HTTPS) */
-    url: string;
+// =============================================================================
+// Aria2 JSON-RPC 2.0 protocol types
+// =============================================================================
 
-    /** File name to save, e.g., "video.mp4" */
-    filename?: string;
-
-    /**
-     * Subdirectory to save the file (relative to the browser's default download directory)
-     * For example, "MyFolder/sub" → <Downloads>/MyFolder/sub/video.mp4
-     */
-    directory?: string;
-
-    /**
-     * HTTP request headers to inject
-     * browser.downloads itself does not support custom headers,
-     * so they need to be injected via declarativeNetRequest
-     */
-    headers?: Record<string, string>;
+export interface Aria2RpcRequest {
+    jsonrpc: "2.0";
+    id: string | number;
+    method: string;
+    params?: unknown[];
 }
 
-/**
- * Runtime state of a download task
- */
+export interface Aria2RpcResponse {
+    jsonrpc: "2.0";
+    id: string | number;
+    result?: unknown;
+    error?: { code: number; message: string };
+}
+
+export interface Aria2VersionResult {
+    version: string;
+    enabledFeatures: string[];
+}
+
+/** Aria2 task status as returned in RPC responses */
+export type Aria2TaskStatus = "active" | "waiting" | "paused" | "error" | "complete" | "removed";
+
+/** Full aria2 task info returned by tellStatus */
+export interface Aria2TaskInfo {
+    gid: string;
+    status: Aria2TaskStatus;
+    totalLength: string;
+    completedLength: string;
+    uploadLength: string;
+    downloadSpeed: string;
+    uploadSpeed: string;
+    dir?: string;
+    files?: Aria2FileInfo[];
+    errorCode?: string;
+    errorMessage?: string;
+    followedBy?: string[];
+    following?: string;
+    belongsTo?: string;
+}
+
+export interface Aria2FileInfo {
+    index: string;
+    path: string;
+    length: string;
+    completedLength: string;
+    selected: string;
+    uris: Aria2UriInfo[];
+}
+
+export interface Aria2UriInfo {
+    uri: string;
+    status: string;
+}
+
+export interface Aria2GlobalStat {
+    downloadSpeed: string;
+    uploadSpeed: string;
+    numActive: string;
+    numWaiting: string;
+    numStopped: string;
+    numStoppedTotal: string;
+}
+
+export interface Aria2SessionInfo {
+    sessionId: string;
+}
+
+/** A single call within a system.multicall batch */
+export interface MultiCallItem {
+    methodName: string;
+    params: unknown[];
+}
+
+// =============================================================================
+// Internal download task types
+// =============================================================================
+
+export interface DownloadRequest {
+    url: string;
+    urls?: string[];
+    filename?: string;
+    directory?: string;
+    headers?: Record<string, string>;
+    position?: number;
+}
+
 export interface DownloadTask {
-    /** Internal unique identifier (16-char hex) */
     id: string;
-
-    /** Browser's native download ID from browser.downloads API */
+    url: string;
+    started: boolean;
     browserDownloadId?: number;
-
-    /** Original download request */
     request: DownloadRequest;
-
-    /** Current task status */
-    status: DownloadStatus;
-
-    /** Bytes downloaded so far */
+    status: InternalStatus;
     bytesReceived: number;
-
-    /** Total file size in bytes (-1 if unknown) */
     totalBytes: number;
-
-    /** Error message if status is 'error' */
+    speed: number;
     error?: string;
-
-    /** Timestamp when task was created */
+    errorCode?: string;
     createdAt: number;
-
-    /** Timestamp when task completed (success or failure) */
     completedAt?: number;
 }
 
-export type DownloadStatus =
-    | "pending"
-    | "in_progress"
-    | "paused"
-    | "complete"
-    | "error"
-    | "cancelled";
+export type InternalStatus = "pending" | "in_progress" | "paused" | "complete" | "error" | "cancelled";
 
-/**
- * Query filter conditions for tasks
- */
+export const TERMINAL_STATUSES: ReadonlySet<InternalStatus> = new Set([
+    "complete", "error", "cancelled",
+]);
+
+export function toAria2Status(s: InternalStatus): Aria2TaskStatus {
+    switch (s) {
+        case "pending":    return "waiting";
+        case "in_progress": return "active";
+        case "paused":     return "paused";
+        case "complete":   return "complete";
+        case "error":      return "error";
+        case "cancelled":  return "removed";
+    }
+}
+
 export interface TaskQuery {
-    status?: DownloadStatus | DownloadStatus[];
+    status?: InternalStatus | InternalStatus[];
     limit?: number;
     offset?: number;
 }
 
-/**
- * Callback for task status changes
- */
 export type TaskChangeListener = (task: DownloadTask) => void;
+
+// =============================================================================
+// Storage types
+// =============================================================================
+
+export interface AppSettings {
+    enabled: boolean;
+    defaultDir: string;
+    maxHistory: number;
+    rpcSecret: string;
+}
+
+export const DEFAULT_SETTINGS: AppSettings = {
+    enabled: true,
+    defaultDir: "",
+    maxHistory: 500,
+    rpcSecret: "",
+};
+
+export interface StoredTask {
+    id: string;
+    url: string;
+    filename: string;
+    directory: string;
+    status: InternalStatus;
+    bytesReceived: number;
+    totalBytes: number;
+    error?: string;
+    createdAt: number;
+    completedAt?: number;
+}

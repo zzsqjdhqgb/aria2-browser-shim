@@ -8,6 +8,7 @@ export default defineConfig({
       'downloads',
       'declarativeNetRequest',
       'tabs',
+      'storage',
     ],
     host_permissions: [
       'http://localhost:6800/*',

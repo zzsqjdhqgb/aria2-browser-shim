@@ -1,6 +1,6 @@
 {
   "name": "aria2-browser-shim",
-  "description": "A lightweight browser extension that seamlessly intercepts Aria2 requests and redirects them to your browser's native download manager.",
+  "description": "Browser extension that intercepts Aria2 JSON-RPC calls and redirects downloads to the native browser download manager. Compatible with AriaNg as frontend UI.",
   "private": true,
   "version": "0.1.0",
   "type": "module",
