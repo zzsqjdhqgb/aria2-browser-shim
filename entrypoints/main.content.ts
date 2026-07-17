@@ -97,11 +97,11 @@ export default defineContentScript({
             const urlStr = url.toString();
             const isAria2 = urlStr.includes("localhost:6800") || urlStr.includes("127.0.0.1:6800");
             (this as any).__aria2 = isAria2;
-            if (!isAria2) {
-                return origXHROpen.call(this, method, url, async!, user, password);
-            }
-            // Don't actually connect for aria2 requests
-            console.log(`${LOG_PREFIX} Intercepted XHR open to ${urlStr}`);
+            // Always call original open so readyState becomes OPENED;
+            // setRequestHeader and other XHR APIs require readyState >= 1.
+            // The actual network call is intercepted in send().
+            if (isAria2) console.log(`${LOG_PREFIX} Intercepted XHR open to ${urlStr}`);
+            return origXHROpen.call(this, method, url, async!, user, password);
         };
 
         XHRProto.send = function (body?: Document | XMLHttpRequestBodyInit | null) {
