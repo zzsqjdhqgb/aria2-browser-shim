@@ -1,6 +1,11 @@
 import React, { useState, useEffect } from "react";
 
 const ARIANG_URL = "https://ariang.mayswind.net/latest/";
+const ARIANG_PROTOCOL = "ws";
+const ARIANG_HOST = "localhost";
+const ARIANG_PORT = "6800";
+const ARIANG_INTERFACE = "jsonrpc";
+const ARIANG_FULL_URL = `${ARIANG_URL}#!/settings/rpc/set/${ARIANG_PROTOCOL}/${ARIANG_HOST}/${ARIANG_PORT}/${ARIANG_INTERFACE}/`;
 
 export default function App() {
     const [enabled, setEnabled] = useState<boolean>(true);
@@ -22,7 +27,7 @@ export default function App() {
     };
 
     const handleOpenAriaNg = () => {
-        browser.tabs.create({ url: ARIANG_URL });
+        browser.tabs.create({ url: ARIANG_FULL_URL });
     };
 
     return (
